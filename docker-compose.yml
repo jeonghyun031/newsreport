@@ -1,0 +1,187 @@
+
+#################################################################
+### Container : 5개
+# MySQL / mysql : 8.0/ 3306
+# spark-master / Spark 클러스터 마스터 노드 / 7077, 8080
+# spark-worker / Spark 클러스터 워커 노드
+# pyspark-practice / Jupyter 대화형 분석 환경 / 8888, 4040, 8000
+#################################################################
+
+
+
+
+version: "3.8"
+
+services:
+
+  #################################################################
+  # MySQL (뉴스 및 공통 메타데이터 저장소)
+  #################################################################
+  mysql: 
+    image: mysql:8.0
+    container_name: mysql-practice
+    command: 
+      - --log-bin-trust-function-creators=1
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --default-time-zone=+09:00
+    environment:
+      MYSQL_ROOT_PASSWORD: practice1234
+      MYSQL_DATABASE: practice_db
+      MYSQL_USER: student
+      MYSQL_PASSWORD: student1234
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+    networks:
+      - data-net
+
+  #################################################################
+  # MLflow Tracking Server
+  #################################################################
+  mlflow:
+    image: python:3.11-slim
+    container_name: mlflow
+    hostname: mlflow
+    depends_on:
+      - mysql
+    command: >
+      /bin/sh -c "
+      pip install --no-cache-dir mlflow==2.3.2 pymysql gunicorn &&
+      mkdir -p /mlflow/artifacts &&
+      chmod -R 777 /mlflow &&
+      mlflow server
+      --backend-store-uri mysql+pymysql://student:student1234@mysql:3306/practice_db
+      --artifacts-destination file:///mlflow/artifacts
+      --server-artifacts
+      --host 0.0.0.0
+      --port 5000
+      "
+    ports:
+      - "5000:5000" 
+    volumes:
+      - mlflow-artifacts:/mlflow/artifacts
+    networks:
+      - data-net
+
+  #################################################################
+  # Spark Master
+  #################################################################
+  spark-master:
+    image: apache/spark:3.5.5
+    container_name: spark-master
+    environment:
+      HOME: /tmp
+    working_dir: /opt/spark/work-dir
+    command:
+      - /opt/spark/bin/spark-class
+      - org.apache.spark.deploy.master.Master
+    ports:
+      - "7077:7077"
+      - "8080:8080"
+    volumes:
+      # 현재 프로젝트 폴더 전체(.)를 마운트하여 크롤러 및 소스 공유
+      - .:/opt/spark/work-dir
+    networks:
+      - data-net
+
+  #################################################################
+  # Spark Worker
+  #################################################################
+  spark-worker:
+    image: apache/spark:3.5.5
+    container_name: spark-worker
+    depends_on:
+      - spark-master
+    environment:
+      HOME: /tmp
+    command: >
+      /opt/spark/bin/spark-class
+      org.apache.spark.deploy.worker.Worker
+      spark://spark-master:7077
+    volumes:
+      - .:/opt/spark/work-dir
+    networks:
+      - data-net
+
+  #################################################################
+  # pyspark-practice : Jupyter + PySpark + OpenAI(Qwen) 통합 환경
+  #################################################################
+  pyspark-practice:
+    image: jupyter/pyspark-notebook:spark-3.5.0
+    container_name: pyspark-practice
+    depends_on:
+      - spark-master
+      - mlflow
+    command: >
+      /bin/sh -c "
+      pip install --no-cache-dir mlflow==2.3.2 pymysql fastapi uvicorn 'scikit-learn<1.3' openai &&
+      start-notebook.sh
+      "
+    environment:
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+      SPARK_MASTER: spark://spark-master:7077
+      PYSPARK_PYTHON: python
+      PYSPARK_PIN_THREAD: "false"
+    ports:
+      - "8888:8888"   # Jupyter Lab 포트
+      - "4040:4040"   # Spark Job 모니터링 포트
+      - "8000:8000"   # FastAPI 실행용 포트
+    volumes:
+      - .:/home/jovyan/work # 현재 내 프로젝트 폴더를 주피터 기본 작업 폴더와 동기화
+      - mlflow-artifacts:/mlflow/artifacts
+    networks:
+      - data-net
+
+  #################################################################
+  # Apache Airflow (파이프라인 정기 자동 스케줄러 추가)
+  #################################################################
+  airflow:
+    image: apache/airflow:2.7.1-python3.11
+    container_name: airflow-scheduler
+    depends_on:
+      - mysql
+      - spark-master
+    environment:
+      - AIRFLOW__CORE__LOAD_EXAMPLES=False
+      - AIRFLOW__CORE__EXECUTOR=SequentialExecutor
+      - AIRFLOW__CORE__SQL_ALCHEMY_CONN=sqlite:////opt/airflow/airflow.db
+    logging:
+      options:
+        max-size: "10m"
+        max-file: "3"
+    ports:
+      - "8085:8080" # Airflow 대시보드는 로컬 8085 포트로 접속 가능하도록 매핑
+    command: >
+      bash -c "
+      airflow db init &&
+      airflow users create --username admin --firstname admin --lastname admin --role Admin --email admin@example.com --password admin &&
+      airflow webserver & airflow scheduler
+      "
+    volumes:
+      - .:/opt/airflow/dags # 프로젝트 폴더 자체가 Airflow의 DAG 구역으로 연동됨
+    networks:
+      - data-net
+
+#################################################################
+# Networks & Volumes 선언부
+#################################################################
+networks:
+  data-net:
+    external: true
+
+volumes:
+  mysql-data:
+    external: true
+  mlflow-artifacts:
+
+#################################################################
+# 실행전 준비 사항
+# docker network create data-net    # 네트워크 생성
+# docker network create mysql-data  # mysql 볼륨 생성
+# mkdir spark-app       # 어플리케이션 디렉토리 생성
+# docker compose down
+# docker compose up -d  # 컨테이너 실행
+# docker compose ps     # 실행 상태 확인  
+#################################################################
