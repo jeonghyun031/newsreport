@@ -11,3 +11,24 @@ services:
       - JUPYTER_ENABLE_LAB=yes
       - JUPYTER_TOKEN=spark123
     restart: always
+# ==============================================
+  airflow:
+    image: puckel/docker-airflow:1.10.9
+    restart: always
+    volumes:
+      - ./dags:/usr/local/airflow/dags
+    ports:
+      - "8080:8080"
+    command: webserver
+    environment:
+      - LOAD_EX=n
+      - EXECUTOR=Local # 💡 스케줄러와 웹서버를 연동하기 위한 가벼운 실행기 지정
+
+
+# Host (엔드포인트 주소): 예) my-database.c123456.ap-northeast-2.rds.amazonaws.com
+
+# Port: 보통 3306
+
+# User / Password: DB 접속 계정 및 비밀번호
+
+# Database Name: 데이터가 들어갈 테이블 스페이스 이름
