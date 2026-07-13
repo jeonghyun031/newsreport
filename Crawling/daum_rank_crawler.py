@@ -74,7 +74,7 @@ def main():
 
     try:
         # 설정할 날짜 (공백이면 기본 페이지, 값이 있으면 해당 날짜 페이지로 이동) ex)20260708
-        news_date = "20260708" 
+        news_date = "" 
         base_url = "https://sports.daum.net/worldsoccer/news/ranking"
 
         # news_date 비어있는지(공백인지) 확인하는 조건문

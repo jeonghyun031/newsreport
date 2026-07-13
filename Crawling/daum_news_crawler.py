@@ -60,7 +60,7 @@ def main():
     news_list = []
     
     try:
-        news_date = "20260710" 
+        news_date = "" 
         base_url = "https://sports.daum.net/baseball/news/breaking"
 
         if not news_date.strip():
