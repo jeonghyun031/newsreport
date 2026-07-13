@@ -113,7 +113,7 @@ def main():
         df = pd.DataFrame(schedule_list)
         if not df.empty:
             current_time = datetime.now().strftime("%Y%m%d_%H%M")
-            filename = f"KBO_Schedule({target_month})_{current_time}.csv"
+            filename = f"KBO_Schedule({target_month}).csv"
             
             output_dir = "Crawling"
             if not os.path.exists(output_dir):

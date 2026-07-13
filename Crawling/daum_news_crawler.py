@@ -60,7 +60,7 @@ def main():
     news_list = []
     
     try:
-        news_date = "20260713" 
+        news_date = "20260710" 
         base_url = "https://sports.daum.net/baseball/news/breaking"
 
         if not news_date.strip():
@@ -194,7 +194,7 @@ def main():
             df.columns = ["날짜", "제목", "언론사", "내용"] # 컬럼명 강제 통일
 
             current_time = datetime.now().strftime("%Y%m%d_%H%M")
-            filename = f"NewsList({news_date})daum_{current_time}.csv"
+            filename = f"NewsList({news_date})daum.csv"
             
             output_dir = "Crawling"
             if not os.path.exists(output_dir):
