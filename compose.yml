@@ -1,0 +1,13 @@
+services:
+  spark-jupyter:
+    image: jupyter/pyspark-notebook:latest
+    container_name: spark-container
+    ports:
+      - "8889:8888"
+      - "4045:4040"
+    volumes:
+      - ./workspace:/home/jovyan/work
+    environment:
+      - JUPYTER_ENABLE_LAB=yes
+      - JUPYTER_TOKEN=spark123
+    restart: always
