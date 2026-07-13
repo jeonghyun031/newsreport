@@ -27,7 +27,7 @@ def main():
 
     try:
         # 2. 대상 연월 설정 (원하는 달을 입력하세요. 공백이면 이번 달 자동 설정)
-        target_month = "202606" 
+        target_month = "" # 예시 : "202607" (YYYYMM)
         if not target_month or not target_month.strip():
             target_month = datetime.now().strftime("%Y%m")
             
