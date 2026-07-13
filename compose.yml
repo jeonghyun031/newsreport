@@ -1,13 +1,16 @@
+version: '3.8'
+
 services:
   spark-jupyter:
     image: jupyter/pyspark-notebook:latest
     container_name: spark-container
     ports:
-      - "8889:8888"
-      - "4045:4040"
+      - "8889:8888"   # Jupyter Lab 웹 포트 (접속: http://localhost:8889)
+      - "4045:4040"   # Spark Web UI 포트
     volumes:
       - ./workspace:/home/jovyan/work
     environment:
       - JUPYTER_ENABLE_LAB=yes
       - JUPYTER_TOKEN=spark123
+      - SPARK_OPTS=--packages com.mysql:mysql-connector-j:8.3.0
     restart: always
