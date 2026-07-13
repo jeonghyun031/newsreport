@@ -1,6 +1,3 @@
-# AWS MySQL Spark Connection Template
-# 이 코드를 복사하여 VS Code에 붙여넣고, AWS RDS 엔드포인트 주소를 입력하여 사용하세요.
-
 from pyspark.sql import SparkSession
 from pyspark.sql.types import StructType, StructField, StringType
 from pyspark.sql.functions import col, to_date, trim, when
