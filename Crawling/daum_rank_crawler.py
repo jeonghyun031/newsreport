@@ -74,16 +74,16 @@ def main():
 
     try:
         # 설정할 날짜 (공백이면 기본 페이지, 값이 있으면 해당 날짜 페이지로 이동) ex)20260708
-        rank_date = "20260708" 
+        news_date = "20260708" 
         base_url = "https://sports.daum.net/worldsoccer/news/ranking"
 
-        # rank_date가 비어있는지(공백인지) 확인하는 조건문
-        if not rank_date.strip():
+        # news_date 비어있는지(공백인지) 확인하는 조건문
+        if not news_date.strip():
             target_url = base_url
             print(f"날짜가 지정되지 않아 기본 랭킹 페이지로 이동합니다: {target_url}")
         else:
-            target_url = f"{base_url}?date={rank_date}"
-            print(f"지정된 날짜({rank_date}) 랭킹 페이지로 이동합니다: {target_url}")
+            target_url = f"{base_url}?date={news_date}"
+            print(f"지정된 날짜({news_date}) 랭킹 페이지로 이동합니다: {target_url}")
 
         # 셀레니움 드라이버로 이동
         driver.get(target_url)
@@ -149,7 +149,7 @@ def main():
             
             # 파일명 현재 '연월일_시분' 추가
             current_time = datetime.now().strftime("%Y%m%d_%H%M")
-            filename = f"newslist_daum_{current_time}.csv"
+            filename = f"NewsRank_{news_date}_daum_{current_time}.csv"
             
             # Crawling 폴더 내부에 격리 저장
             output_dir = "Crawling"
