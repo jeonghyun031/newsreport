@@ -45,7 +45,7 @@ cleaned_df.show(truncate=False)
 
 # 3. AWS MySQL 연결 설정 (★ 본인의 VS Code 세팅 정보로 수정해 주세요!)
 aws_rds_endpoint = "your-aws-rds-endpoint.amazonaws.com"
-db_name = "test_db"
+db_name = "articel_db"
 jdbc_url = f"jdbc:mysql://{aws_rds_endpoint}:3306/{db_name}"
 
 db_properties = {

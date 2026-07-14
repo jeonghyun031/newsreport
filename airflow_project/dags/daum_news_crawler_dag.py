@@ -7,13 +7,11 @@ import pandas as pd
 # Airflow 관련 오퍼레이터
 from airflow import DAG
 from airflow.operators.python import PythonOperator
-from airflow.providers.apache.spark.operators.spark_submit import SparkSubmitOperator
+from airflow.operators.bash import BashOperator
 
 # 셀레니움 & 뷰티풀수프
 from selenium import webdriver
-from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
-#from webdriver_manager.chrome import ChromeDriverManager
 from selenium.webdriver.common.by import By
 from bs4 import BeautifulSoup
 
@@ -51,8 +49,8 @@ def convert_relative_time(date_text):
 
 def run_pure_crawler():
     """
-    지휘관(Airflow) 컨테이너에서 무거운 브라우저를 띄워 
-    공유 볼륨의 'raw' 폴더에 순수 원본 CSV를 적재하는 단계입니다.
+    지휘관(Airflow) 컨테이너에서 원격 셀레니움을 통해 크롤링을 수행하고, 
+    주소(URL) 정보를 포함하여 공유 볼륨의 'raw' 폴더에 CSV를 적재하는 단계입니다.
     """
     chrome_options = Options()
     chrome_options.add_argument('--headless') 
@@ -62,10 +60,7 @@ def run_pure_crawler():
     chrome_options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
     chrome_options.add_argument("--blink-settings=imagesEnabled=false") 
     
-    #print("Chrome 브라우저를 백그라운드에서 실행합니다...")
     print("원격 셀레니움 컨테이너에 브라우저 실행을 요청합니다...")
-    #service = Service(ChromeDriverManager().install())
-    #driver = webdriver.Chrome(service=service, options=chrome_options)
     driver = webdriver.Remote(
         command_executor='http://selenium-chrome:4444/wd/hub',
         options=chrome_options
@@ -136,6 +131,13 @@ def run_pure_crawler():
                 title = title_el.text.strip()
                 doct = doct_el.text.strip() if doct_el else ""
                 
+                # 기사 URL 추출 로직 반영
+                news_url = title_el.get("href", "").strip() if title_el else ""
+                if not news_url and doct_el:
+                    news_url = doct_el.get("href", "").strip()
+                if news_url and not news_url.startswith("http"):
+                    news_url = "https://sports.daum.net" + news_url
+                
                 txt_infos = info_el.select(".txt_info") if info_el else []
                 if len(txt_infos) >= 2:
                     raw_date = txt_infos[0].text.strip()
@@ -151,15 +153,14 @@ def run_pure_crawler():
                     raw_date, script = script, raw_date
                     
                 rk_date = convert_relative_time(raw_date)
-
-                # 💡 [구조 변경]: 글자수 제한(40자) 및 공백 제거 등의 '데이터 가공/수정' 작업은
-                # 이 파트에서 제외하고 원본 그대로 담은 후, 뒷단 단계인 Spark 컨테이너에 위임합니다.
+                doct_clean = " ".join(doct.split())
                 
                 news_list.append({
-                    "날짜": rk_date,
-                    "제목": title,
-                    "언론사": script,
-                    "내용": doct
+                    "date": rk_date,
+                    "title": title,
+                    "media": script,
+                    "content": doct_clean,
+                    "url": news_url
                 })
             
             except Exception as e:
@@ -169,17 +170,15 @@ def run_pure_crawler():
         # DataFrame 생성 및 공유 볼륨에 원본 저장
         df = pd.DataFrame(news_list)
         if not df.empty:
-            df = df[["날짜", "제목", "언론사", "내용"]]
-            df.columns = ["date", "title", "media", "content"] # Spark 처리가 편하게 영문명 권장
+            df = df[["date", "title", "media", "content", "url"]]
 
-            filename = f"raw_news_{news_date}.csv"
+            filename = f"raw_news({news_date}).csv"
             if not os.path.exists(SHARED_RAW_DIR):
                 os.makedirs(SHARED_RAW_DIR)
             save_path = os.path.join(SHARED_RAW_DIR, filename)
             
-            # 후속 Spark 처리를 위해 인덱스와 헤더를 포함하여 저장
             df.to_csv(save_path, index=False, header=True, encoding="utf-8-sig")
-            print(f"\n[1단계 완료] 공유 볼륨 원본 저장 성공! -> {save_path}")
+            print(f"\n[1단계 완료] 공유 볼륨 원본 저장 성공! -> {save_path} (총 {len(df)}건)")
         else:
             print("수집된 데이터가 없습니다.")
 
@@ -215,15 +214,11 @@ with DAG(
         python_callable=run_pure_crawler,
     )
 
-    # [Task 2]: Spark 컨테이너 원격 실행 태스크
-    # Airflow 웹 UI 연결 정보(Connections)에 등록된 'spark_default' 주소로 전처리 명령을 보냅니다.
-    spark_transform_task = SparkSubmitOperator(
+    # [Task 2]: Spark 컨테이너 원격 실행 태스크 (도커 exec로 spark-container 내부 호출)
+    spark_transform_task = BashOperator(
         task_id='spark_remote_transform_task',
-        application=os.path.join(SHARED_VOLUME_DIR, 'scripts/spark_process.py'),  # 공유 폴더 내 Spark 실행용 스크립트 위치
-        conn_id='spark_default',
-        verbose=True
+        bash_command='docker exec spark-container spark-submit --master local[*] /opt/shared/scripts/spark_process.py',
     )
 
-    # 순서 제어: 크롤링이 완벽히 끝나서 CSV가 만들어지면 Spark를 깨웁니다.
+    # 순서 제어
     crawl_task >> spark_transform_task
-    
