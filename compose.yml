@@ -14,22 +14,52 @@ services:
       - JUPYTER_TOKEN=spark123
       - SPARK_OPTS=--packages com.mysql:mysql-connector-j:8.3.0
     restart: always
-# ==============================================
-# docker compose run --rm airflow-worker airflow db init
-# 실행전 디비 초기화 과정 필요
-  airflow:
-    image: apache/airflow:2.7.1
+
+  # =============================================
+  # 셀레니움을 완벽하게 돌려줄 크롬 전용 독채 컨테이너 추가
+  selenium-chrome:
+    image: selenium/standalone-chrome:latest
+    container_name: selenium-chrome
+    ports:
+      - "4444:4444"
+    shm_size: 2g # 크롬 브라우저가 메모리 부족으로 뻗는 것을 방지
     restart: always
+
+  # ==============================================
+  # 1. DB 초기화 (한 번 실행되고 자동 종료)
+  airflow-init:
+    image: apache/airflow:2.7.1
+    environment:
+      - AIRFLOW__CORE__EXECUTOR=SequentialExecutor
+      - AIRFLOW__CORE__SQL_ALCHEMY_CONN=sqlite:////opt/airflow/airflow.db
+      - _PIP_ADDITIONAL_REQUIREMENTS=apache-airflow-providers-apache-spark==4.1.3 selenium beautifulsoup4 pandas
     volumes:
       - ./airflow_project/dags:/opt/airflow/dags
-      
+      - ./airflow_project/airflow.db:/opt/airflow/airflow.db # 로컬 db 파일과 직접 연동
+    command: >
+      bash -c "airflow db init &&
+      airflow users create --username admin --firstname admin --lastname admin --role Admin --email admin@example.com --password admin"
+
+  # 2. 실제 화면 + 스케줄러 가동 서비스
+  airflow-webserver:
+    image: apache/airflow:2.7.1
+    restart: always
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+    environment:
+      - AIRFLOW__CORE__EXECUTOR=SequentialExecutor
+      - AIRFLOW__CORE__SQL_ALCHEMY_CONN=sqlite:////opt/airflow/airflow.db
+      - AIRFLOW__CORE__LOAD_EXAMPLES=False # 가볍게 예제 DAG는 로드하지 않음
+      # Spark 연동 패키지를 주입합니다.
+      - _PIP_ADDITIONAL_REQUIREMENTS=apache-airflow-providers-apache-spark==4.1.3 selenium beautifulsoup4 pandas
     ports:
       - "8080:8080"
-    command: webserver
-    environment:
-      - LOAD_EX=n
-      - EXECUTOR=Sequential # 💡 스케줄러와 웹서버를 연동하기 위한 가벼운 실행기 지정
-
+    volumes:
+      - ./airflow_project/dags:/opt/airflow/dags
+      - ./airflow_project/airflow.db:/opt/airflow/airflow.db # 로컬 db 파일과 직접 연동
+    # 💡 웹서버와 스케줄러를 동시에 띄워 DAG 파일을 실시간으로 감시 및 로드합니다.
+    command: bash -c "airflow scheduler & airflow webserver"
 
 # Host (엔드포인트 주소): 예) my-database.c123456.ap-northeast-2.rds.amazonaws.com
 

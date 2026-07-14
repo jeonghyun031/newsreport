@@ -62,11 +62,14 @@ def run_pure_crawler():
     chrome_options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
     chrome_options.add_argument("--blink-settings=imagesEnabled=false") 
     
-    print("Chrome 브라우저를 백그라운드에서 실행합니다...")
-
-    service = Service(ChromeDriverManager().install())
-    driver = webdriver.Chrome(service=service, options=chrome_options)
-    
+    #print("Chrome 브라우저를 백그라운드에서 실행합니다...")
+    print("원격 셀레니움 컨테이너에 브라우저 실행을 요청합니다...")
+    #service = Service(ChromeDriverManager().install())
+    #driver = webdriver.Chrome(service=service, options=chrome_options)
+    driver = webdriver.Remote(
+        command_executor='http://selenium-chrome:4444/wd/hub',
+        options=chrome_options
+    )
     news_list = []
     
     try:
