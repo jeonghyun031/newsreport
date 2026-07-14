@@ -50,10 +50,25 @@ function App() {
       
       let filtered = data.filter(sched => sched.date === todayStr);
       if (filtered.length === 0 && data.length > 0) {
-        // 오늘 날짜 경기가 DB에 없다면, 존재 기사 날짜 중 가장 최근 유효 날짜의 경기를 하루치 반환
-        const availableDates = [...new Set(data.map(s => s.date))].sort();
-        const fallbackDate = availableDates[availableDates.length - 1] || data[0].date;
-        filtered = data.filter(sched => sched.date === fallbackDate);
+        // 오늘 경기가 없다면, DB 내의 경기 날짜들 중 오늘과 시간상 가장 가까운(절대값 차이가 최소인) 날짜 찾기
+        const availableDates = [...new Set(data.map(s => s.date))];
+        let closestDate = availableDates[0];
+        let minDiff = Infinity;
+        
+        availableDates.forEach(dateStr => {
+          const y = parseInt(dateStr.substring(0, 4), 10);
+          const m = parseInt(dateStr.substring(4, 6), 10) - 1;
+          const d = parseInt(dateStr.substring(6, 8), 10);
+          const targetDateObj = new Date(y, m, d);
+          
+          const diff = Math.abs(localToday - targetDateObj);
+          if (diff < minDiff) {
+            minDiff = diff;
+            closestDate = dateStr;
+          }
+        });
+        
+        filtered = data.filter(sched => sched.date === closestDate);
       }
       
       setSchedules(filtered);
