@@ -15,14 +15,11 @@ services:
       - SPARK_OPTS=--packages com.mysql:mysql-connector-j:8.3.0
     restart: always
 # ==============================================
-# docker compose run --rm airflow-worker airflow db init
-# 실행전 디비 초기화 과정 필요
   airflow:
-    image: apache/airflow:2.7.1
+    image: puckel/docker-airflow:1.10.9
     restart: always
     volumes:
-      - ./airflow_project/dags:/opt/airflow/dags
-      
+      - ./dags:/usr/local/airflow/dags
     ports:
       - "8080:8080"
     command: webserver
