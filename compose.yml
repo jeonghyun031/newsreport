@@ -1,4 +1,3 @@
-version: '3.8'
 
 services:
   spark-jupyter:
@@ -15,17 +14,15 @@ services:
       - SPARK_OPTS=--packages com.mysql:mysql-connector-j:8.3.0
     restart: always
 
-  # =============================================
-  # 셀레니움을 완벽하게 돌려줄 크롬 전용 독채 컨테이너 추가
+  # 셀레니움을 완벽하게 돌려줄 크롬 전용 독채 컨테이너
   selenium-chrome:
     image: selenium/standalone-chrome:latest
     container_name: selenium-chrome
     ports:
       - "4444:4444"
-    shm_size: 2g # 크롬 브라우저가 메모리 부족으로 뻗는 것을 방지
+    shm_size: 2g
     restart: always
 
-  # ==============================================
   # 1. DB 초기화 (한 번 실행되고 자동 종료)
   airflow-init:
     image: apache/airflow:2.7.1
@@ -35,10 +32,11 @@ services:
       - _PIP_ADDITIONAL_REQUIREMENTS=apache-airflow-providers-apache-spark==4.1.3 selenium beautifulsoup4 pandas
     volumes:
       - ./airflow_project/dags:/opt/airflow/dags
-      - ./airflow_project/airflow.db:/opt/airflow/airflow.db # 로컬 db 파일과 직접 연동
+      - ./shared:/opt/shared
+      # 💡 로컬 airflow.db 파일 매핑은 완전히 제거하여 권한 꼬임 방지
     command: >
-      bash -c "airflow db init &&
-      airflow users create --username admin --firstname admin --lastname admin --role Admin --email admin@example.com --password admin"
+      bash -c "airflow db migrate &&
+      airflow users create --username admin --firstname admin --lastname admin --role Admin --email admin@example.com --password admin || true"
 
   # 2. 실제 화면 + 스케줄러 가동 서비스
   airflow-webserver:
@@ -47,24 +45,16 @@ services:
     depends_on:
       airflow-init:
         condition: service_completed_successfully
+      selenium-chrome:
+        condition: service_started
     environment:
       - AIRFLOW__CORE__EXECUTOR=SequentialExecutor
       - AIRFLOW__CORE__SQL_ALCHEMY_CONN=sqlite:////opt/airflow/airflow.db
-      - AIRFLOW__CORE__LOAD_EXAMPLES=False # 가볍게 예제 DAG는 로드하지 않음
-      # Spark 연동 패키지를 주입합니다.
+      - AIRFLOW__CORE__LOAD_EXAMPLES=False
       - _PIP_ADDITIONAL_REQUIREMENTS=apache-airflow-providers-apache-spark==4.1.3 selenium beautifulsoup4 pandas
     ports:
       - "8080:8080"
     volumes:
       - ./airflow_project/dags:/opt/airflow/dags
-      - ./airflow_project/airflow.db:/opt/airflow/airflow.db # 로컬 db 파일과 직접 연동
-    # 💡 웹서버와 스케줄러를 동시에 띄워 DAG 파일을 실시간으로 감시 및 로드합니다.
-    command: bash -c "airflow scheduler & airflow webserver"
-
-# Host (엔드포인트 주소): 예) my-database.c123456.ap-northeast-2.rds.amazonaws.com
-
-# Port: 보통 3306
-
-# User / Password: DB 접속 계정 및 비밀번호
-
-# Database Name: 데이터가 들어갈 테이블 스페이스 이름
+      - ./shared:/opt/shared
+    command: bash -c "airflow db migrate && airflow scheduler & airflow webserver"

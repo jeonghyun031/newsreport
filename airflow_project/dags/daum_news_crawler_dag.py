@@ -13,7 +13,7 @@ from airflow.providers.apache.spark.operators.spark_submit import SparkSubmitOpe
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
-from webdriver_manager.chrome import ChromeDriverManager
+#from webdriver_manager.chrome import ChromeDriverManager
 from selenium.webdriver.common.by import By
 from bs4 import BeautifulSoup
 
@@ -227,9 +227,3 @@ with DAG(
     # 순서 제어: 크롤링이 완벽히 끝나서 CSV가 만들어지면 Spark를 깨웁니다.
     crawl_task >> spark_transform_task
     
-    # 파일 최하단에 테스트용으로 추가 (테스트 완료 후 삭제하거나 주석 처리)
-if __name__ == "__main__":
-    print("🚀 [테스트] Airflow 없이 크롤링 함수를 직접 실행합니다.")
-    # 로컬 테스트용 임시 경로 지정 (권한 에러 방지)
-    SHARED_RAW_DIR = "./crawling_test_raw" 
-    run_pure_crawler()
