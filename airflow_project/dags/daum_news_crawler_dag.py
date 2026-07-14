@@ -172,7 +172,7 @@ def run_pure_crawler():
         if not df.empty:
             df = df[["date", "title", "media", "content", "url"]]
 
-            filename = f"raw_news({news_date}).csv"
+            filename = f"raw_news_{news_date}.csv"
             if not os.path.exists(SHARED_RAW_DIR):
                 os.makedirs(SHARED_RAW_DIR)
             save_path = os.path.join(SHARED_RAW_DIR, filename)
@@ -215,9 +215,10 @@ with DAG(
     )
 
     # [Task 2]: Spark 컨테이너 원격 실행 태스크 (도커 exec로 spark-container 내부 호출)
+    # [Task 2]: 워크스페이스 내 etl_job.py를 실행하며 오늘 날짜 인자 전달
     spark_transform_task = BashOperator(
         task_id='spark_remote_transform_task',
-        bash_command='docker exec spark-container spark-submit --master local[*] /opt/shared/scripts/spark_process.py',
+        bash_command='docker exec spark-container spark-submit --master local[*] /home/jovyan/work/etl_job.py $(date +%Y%m%d)',
     )
 
     # 순서 제어

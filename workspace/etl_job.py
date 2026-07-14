@@ -2,6 +2,8 @@ from pyspark.sql import SparkSession
 from pyspark.sql.types import StructType, StructField, StringType
 from pyspark.sql.functions import col, to_timestamp, trim, when, udf
 import os
+import sys
+from datetime import datetime
 
 print("🚀 Spark Session 시작 중...")
 # Spark 세션 생성 (MySQL JDBC 드라이버 추가 포함)
@@ -15,7 +17,7 @@ spark.sparkContext.setLogLevel("WARN")
 
 # .env 설정 파일 유연한 로드 (로컬 / 컨테이너 양방향 호환)
 env_dict = {}
-env_paths = [".env", "../.env", "/home/jovyan/work/.env"]
+env_paths = [".env", "../.env", "/home/jovyan/work/.env", "/opt/shared/.env"]
 env_path = None
 for path in env_paths:
     if os.path.exists(path):
@@ -33,29 +35,7 @@ if env_path:
 else:
     print("⚠️ .env 파일을 찾을 수 없어 기본/시스템 환경변수를 사용합니다.")
 
-# 데이터프레임 생성
-df = spark.createDataFrame(raw_news_data, schema)
-print("\n📊 [1. 정제 전 원본 뉴스 데이터]")
-df.show(truncate=False)
-
-# 2. 데이터 정제 과정 (Transform)
-print("🧹 데이터 정제 프로세스 가동...")
-cleaned_df = df.dropna(subset=["date", "title"])
-cleaned_df = cleaned_df.withColumn("title", trim(col("title")))
-cleaned_df = cleaned_df.withColumn("press", when(col("press").isNull(), "미상").otherwise(col("press")))
-cleaned_df = cleaned_df.withColumn("date", 
-    when(col("date").contains("-"), to_date(col("date"), "yyyy-MM-dd"))
-    .otherwise(to_date(col("date"), "yyyy/MM/dd"))
-)
-cleaned_df = cleaned_df.dropDuplicates(subset=["title", "content"])
-
-print("\n✨ [2. 정제 완료된 뉴스 데이터]")
-cleaned_df.show(truncate=False)
-
-# 3. AWS MySQL 연결 설정 (★ 본인의 VS Code 세팅 정보로 수정해 주세요!)
-aws_rds_endpoint = "your-aws-rds-endpoint.amazonaws.com"
-db_name = "articel_db"
-jdbc_url = f"jdbc:mysql://{aws_rds_endpoint}:3306/{db_name}"
+# AWS MySQL 연결 설정
 aws_rds_endpoint = env_dict.get("AWS_RDS_ENDPOINT", os.getenv("AWS_RDS_ENDPOINT", "database-1.cf0ecym6emk4.ap-southeast-2.rds.amazonaws.com"))
 db_port = env_dict.get("DB_PORT", os.getenv("DB_PORT", "3306"))
 db_user = env_dict.get("DB_USER", os.getenv("DB_USER", "admin"))
@@ -69,13 +49,16 @@ db_properties = {
     "driver": "com.mysql.cj.jdbc.Driver"
 }
 
-# 1. 뉴스 CSV 데이터 추출 (Extract)
-print("\n📡 뉴스 CSV 데이터를 추출하는 중...")
-csv_path = "Crawling/NewsList*daum.csv"
-if not os.path.exists("Crawling") and os.path.exists("/home/jovyan/work/Crawling"):
-    csv_path = "/home/jovyan/work/Crawling/NewsList*daum.csv"
+# 1. 뉴스 CSV 데이터 추출 (Extract) - 공유 볼륨 raw 디렉토리 연동
+target_date = sys.argv[1] if len(sys.argv) > 1 else datetime.now().strftime("%Y%m%d")
+csv_path = f"/opt/shared/raw/raw_news_{target_date}.csv"
 
-# CSV 스키마 정의 (5개 컬럼: 날짜, 제목, 언론사, 내용, 주소)
+if not os.path.exists(csv_path) and os.path.exists(f"/home/jovyan/work/raw/raw_news_{target_date}.csv"):
+    csv_path = f"/home/jovyan/work/raw/raw_news_{target_date}.csv"
+
+print(f"\n📡 뉴스 CSV 데이터를 추출하는 중... 대상 파일: {csv_path}")
+
+# CSV 스키마 정의 (5개 컬럼: date, title, media, content, url)
 raw_schema = StructType([
     StructField("raw_date", StringType(), True),
     StructField("raw_title", StringType(), True),
@@ -86,7 +69,7 @@ raw_schema = StructType([
 
 try:
     df = spark.read \
-        .option("header", "false") \
+        .option("header", "true") \
         .option("multiLine", "true") \
         .option("quote", "\"") \
         .option("escape", "\"") \
