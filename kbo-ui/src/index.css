@@ -1,0 +1,26 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+code {
+  font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
+    monospace;
+}
+
+/* 스크롤바 감추기 유틸리티 (휠 스크롤은 유지) */
+.no-scrollbar::-webkit-scrollbar {
+  display: none; /* 크롬, 사파리, 엣지 */
+}
+.no-scrollbar {
+  -ms-overflow-style: none; /* IE, 레거시 엣지 */
+  scrollbar-width: none; /* 파이어폭스 */
+}

@@ -7,7 +7,7 @@ services:
       - "8889:8888"   # Jupyter Lab 웹 포트 (접속: http://localhost:8889)
       - "4045:4040"   # Spark Web UI 포트
     volumes:
-      - ./workspace:/home/jovyan/work
+      - .:/home/jovyan/work
     environment:
       - JUPYTER_ENABLE_LAB=yes
       - JUPYTER_TOKEN=spark123
