@@ -1,6 +1,7 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from saju import get_baseball_saju
 import os
 import pymysql
 import requests
@@ -211,6 +212,36 @@ def summarize_news(payload: SummarizeRequest):
         return {"summary": summary_content}
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"LLM API 연동 실패: {str(e)}")
+
+@app.get("/api/schedule")
+def get_schedule():
+    """
+    KBO 경기 일정 데이터를 statistics_db.kbo_schedule 테이블로부터 조회하여 제공합니다.
+    """
+    try:
+        conn = get_db_connection()
+        with conn.cursor() as cursor:
+            # 기본 접속 DB가 articel_db이므로, 명시적으로 statistics_db.kbo_schedule을 쿼리합니다.
+            sql = "SELECT date, time, away_team, home_team, stadium, status FROM statistics_db.kbo_schedule ORDER BY date ASC, time ASC"
+            cursor.execute(sql)
+            result = cursor.fetchall()
+        conn.close()
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"경기 일정 조회 실패: {str(e)}")
+
+@app.get("/api/saju")
+def get_pitcher_saju(pitcher: str):
+    """
+    Qwen LLM 기반 '야잘알 도사' 투수 사주풀이 결과를 생성하여 반환합니다.
+    """
+    if not pitcher or not pitcher.strip():
+        raise HTTPException(status_code=400, detail="투수 이름을 입력해 주세요.")
+    try:
+        saju_text = get_baseball_saju(pitcher.strip())
+        return {"saju": saju_text}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"사주 생성 실패: {str(e)}")
 
 if __name__ == "__main__":
     import uvicorn
