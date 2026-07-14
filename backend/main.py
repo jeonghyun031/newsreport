@@ -1,3 +1,8 @@
+import sys
+import os
+# 프로젝트 상위 루트 경로를 모듈 탐색 경로에 추가
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -222,7 +227,7 @@ def get_schedule():
         conn = get_db_connection()
         with conn.cursor() as cursor:
             # 기본 접속 DB가 articel_db이므로, 명시적으로 statistics_db.kbo_schedule을 쿼리합니다.
-            sql = "SELECT date, time, away_team, home_team, stadium, status FROM statistics_db.kbo_schedule ORDER BY date ASC, time ASC"
+            sql = "SELECT date, time, away_team, home_team, stadium, status, away_pitcher, home_pitcher FROM statistics_db.kbo_schedule ORDER BY date ASC, time ASC"
             cursor.execute(sql)
             result = cursor.fetchall()
         conn.close()
@@ -231,14 +236,19 @@ def get_schedule():
         raise HTTPException(status_code=500, detail=f"경기 일정 조회 실패: {str(e)}")
 
 @app.get("/api/saju")
-def get_pitcher_saju(pitcher: str, opponent: Optional[str] = "상대팀", stadium: Optional[str] = "야구장"):
+def get_pitcher_saju(
+    pitcher: str, 
+    opponent: Optional[str] = "상대팀", 
+    stadium: Optional[str] = "야구장",
+    date: Optional[str] = None
+):
     """
     Qwen LLM 기반 '야잘알 도사' 투수 사주풀이 결과를 생성하여 반환합니다.
     """
     if not pitcher or not pitcher.strip():
         raise HTTPException(status_code=400, detail="투수 이름을 입력해 주세요.")
     try:
-        saju_text = get_baseball_saju(pitcher.strip(), opponent.strip(), stadium.strip())
+        saju_text = get_baseball_saju(pitcher.strip(), opponent.strip(), stadium.strip(), date)
         return {"saju": saju_text}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"사주 생성 실패: {str(e)}")

@@ -9,26 +9,12 @@ function App() {
   const [selectedArticle, setSelectedArticle] = useState(null);
 
   // KBO 경기일정 및 투수 사주 대결 상태 변수
-  const [activeTab, setActiveTab] = useState('news'); 
+  const [activeTab, setActiveTab] = useState('news');
   const [schedules, setSchedules] = useState([]);
   const [loadingSchedules, setLoadingSchedules] = useState(false);
   const [selectedSchedule, setSelectedSchedule] = useState(null);
   const [sajuResult, setSajuResult] = useState({ home: '', away: '' });
   const [loadingSaju, setLoadingSaju] = useState({ home: false, away: false });
-
-  // 구단별 대표 선발 투수 매핑 사전
-  const TEAM_PITCHERS = {
-    '삼성': '원태인',
-    '한화': '류현진',
-    'KIA': '양현종',
-    '두산': '곽빈',
-    'LG': '임찬규',
-    'KT': '고영표',
-    'SSG': '김광현',
-    '롯데': '반즈',
-    'NC': '하트',
-    '키움': '후라도'
-  };
 
   // FastAPI 백엔드 주소
   const BACKEND_URL = 'http://localhost:8000';
@@ -40,44 +26,44 @@ function App() {
       const res = await fetch(`${BACKEND_URL}/api/schedule`);
       if (!res.ok) throw new Error('경기 일정 API 응답 실패');
       const data = await res.json();
-      
+
       // 당일 경기 필터링 (로컬 날짜 추출 YYYYMMDD)
       const localToday = new Date();
       const yyyy = localToday.getFullYear();
       const mm = String(localToday.getMonth() + 1).padStart(2, '0');
       const dd = String(localToday.getDate()).padStart(2, '0');
-      const todayStr = `${yyyy}${mm}${dd}`; 
-      
+      const todayStr = `${yyyy}${mm}${dd}`;
+
       let filtered = data.filter(sched => sched.date === todayStr);
       if (filtered.length === 0 && data.length > 0) {
         // 오늘 경기가 없다면, DB 내의 경기 날짜들 중 오늘과 시간상 가장 가까운(절대값 차이가 최소인) 날짜 찾기
         const availableDates = [...new Set(data.map(s => s.date))];
         let closestDate = availableDates[0];
         let minDiff = Infinity;
-        
+
         availableDates.forEach(dateStr => {
           const y = parseInt(dateStr.substring(0, 4), 10);
           const m = parseInt(dateStr.substring(4, 6), 10) - 1;
           const d = parseInt(dateStr.substring(6, 8), 10);
           const targetDateObj = new Date(y, m, d);
-          
+
           const diff = Math.abs(localToday - targetDateObj);
           if (diff < minDiff) {
             minDiff = diff;
             closestDate = dateStr;
           }
         });
-        
+
         filtered = data.filter(sched => sched.date === closestDate);
       }
-      
+
       setSchedules(filtered);
-      
+
       if (filtered.length > 0) {
         setSelectedSchedule(filtered[0]); // 첫 경기 자동 선택
-        // 양팀 선발 사주 자동 패치 기동 (상대팀 및 구장 정보 동시 공급)
-        const awayPitcher = TEAM_PITCHERS[filtered[0].away_team] || '투수';
-        const homePitcher = TEAM_PITCHERS[filtered[0].home_team] || '투수';
+        // 양팀 선발 사주 자동 패치 기동 (실제 DB 선발 투수 컬럼 데이터 활용)
+        const awayPitcher = filtered[0].away_pitcher || '미정';
+        const homePitcher = filtered[0].home_pitcher || '미정';
         fetchSaju(awayPitcher, filtered[0].home_team, filtered[0].stadium, false);
         fetchSaju(homePitcher, filtered[0].away_team, filtered[0].stadium, true);
       } else {
@@ -91,13 +77,17 @@ function App() {
     }
   };
 
-  // 개별 선발 투수의 Qwen AI 사주풀이 호출 (Lazy loading 및 파라미터 공급)
-  const fetchSaju = async (pitcherName, opponentTeam, stadiumName, isHome) => {
+  // 개별 선발 투수의 Qwen AI 사주풀이 호출 (Lazy loading 및 파라미터 공급, 선발 투수 미정 시 호출 전면 차단)
+  const fetchSaju = async (pitcherName, opponentTeam, stadiumName, isHome, gameDate) => {
     const type = isHome ? 'home' : 'away';
+    if (!pitcherName || pitcherName.trim() === '' || pitcherName === '미정') {
+      setSajuResult(prev => ({ ...prev, [type]: '선발 투수가 지정되지 않아 도사님도 운세를 점치실 수 없네.' }));
+      return;
+    }
     setLoadingSaju(prev => ({ ...prev, [type]: true }));
     setSajuResult(prev => ({ ...prev, [type]: '' }));
     try {
-      const url = `${BACKEND_URL}/api/saju?pitcher=${encodeURIComponent(pitcherName)}&opponent=${encodeURIComponent(opponentTeam)}&stadium=${encodeURIComponent(stadiumName)}`;
+      const url = `${BACKEND_URL}/api/saju?pitcher=${encodeURIComponent(pitcherName)}&opponent=${encodeURIComponent(opponentTeam)}&stadium=${encodeURIComponent(stadiumName)}&date=${encodeURIComponent(gameDate || '')}`;
       const res = await fetch(url);
       if (!res.ok) throw new Error('사주 API 응답 실패');
       const data = await res.json();
@@ -113,11 +103,11 @@ function App() {
   // 경기 선택 이벤트 헬퍼
   const handleSelectSchedule = (sched) => {
     setSelectedSchedule(sched);
-    const awayPitcher = TEAM_PITCHERS[sched.away_team] || '투수';
-    const homePitcher = TEAM_PITCHERS[sched.home_team] || '투수';
-    // 양 팀 선발 투수 사주풀이 실시간 로드 (상대팀 및 경기장 공급)
-    fetchSaju(awayPitcher, sched.home_team, sched.stadium, false);
-    fetchSaju(homePitcher, sched.away_team, sched.stadium, true);
+    const awayPitcher = sched.away_pitcher || '미정';
+    const homePitcher = sched.home_pitcher || '미정';
+    // 양 팀 선발 투수 사주풀이 실시간 로드 (실제 DB 선발 투수 데이터 활용 및 경기 날짜 공급)
+    fetchSaju(awayPitcher, sched.home_team, sched.stadium, false, sched.date);
+    fetchSaju(homePitcher, sched.away_team, sched.stadium, true, sched.date);
   };
 
   // 뉴스 목록 로드 & 백그라운드 자동 요약 연동
@@ -126,17 +116,17 @@ function App() {
     setLoadingSummary(true);
     setSummary('');
     try {
-      const url = queryVal 
+      const url = queryVal
         ? `${BACKEND_URL}/api/news?query=${encodeURIComponent(queryVal)}`
         : `${BACKEND_URL}/api/news`;
       const res = await fetch(url);
       if (!res.ok) throw new Error('API 응답 실패');
       const data = await res.json();
       setNews(data);
-      
+
       // 기사 목록 표를 화면에 즉시 렌더링하도록 목록 스피너 먼저 종료! (체감 0초 렌더링)
       setLoadingNews(false);
-      
+
       if (data.length > 0) {
         // 첫 번째 기사 디폴트 선택 및 본문 Lazy 로드 기동
         fetchSelectedArticleContent(data[0]);
@@ -181,17 +171,17 @@ function App() {
       setSelectedArticle(item);
       return;
     }
-    
+
     // 본문 로드 시작
     try {
       setSelectedArticle({ ...item, content: '본문을 불러오는 중입니다...' });
       const res = await fetch(`${BACKEND_URL}/api/news/content?title=${encodeURIComponent(item.title)}`);
       if (!res.ok) throw new Error('본문 로드 실패');
       const data = await res.json();
-      
+
       const updatedArticle = { ...item, content: data.content };
       setSelectedArticle(updatedArticle);
-      
+
       // 목록 데이터에도 본문을 캐싱하여 재클릭 시 고속 렌더링
       setNews(prevNews => prevNews.map(n => n.title === item.title ? updatedArticle : n));
     } catch (err) {
@@ -219,19 +209,19 @@ function App() {
   // 브리핑 가독성을 극대화하기 위한 가독성 렌더러 (이모지 배제)
   const renderSummaryContent = (summaryText) => {
     if (!summaryText) return null;
-    
+
     // 줄 단위 쪼개기
     const lines = summaryText.split('\n').map(l => l.trim()).filter(Boolean);
-    
+
     return (
       <div className="space-y-4">
         {lines.map((line, idx) => {
           // 불릿 기호 제거
           let cleanLine = line.replace(/^[\s\-\*]+/, '').trim();
-          
+
           // **[키워드]** 본문 패턴 매칭
           const match = cleanLine.match(/^\*?\*?\[(.*?)\]\*?\*?\s*(.*)$/);
-          
+
           if (match) {
             const keyword = match[1];
             const description = match[2];
@@ -246,7 +236,7 @@ function App() {
               </div>
             );
           }
-          
+
           // 패턴 매칭 실패 시 일반 기사 텍스트 굵고 선명하게 렌더링
           return (
             <div key={idx} className="p-4 bg-white border border-slate-200 rounded-lg shadow-sm">
@@ -342,7 +332,7 @@ function App() {
                       </thead>
                       <tbody className="divide-y divide-slate-100">
                         {news.map((item, idx) => (
-                          <tr 
+                          <tr
                             key={idx}
                             onClick={() => fetchSelectedArticleContent(item)}
                             className={`hover:bg-slate-50 cursor-pointer transition ${selectedArticle?.title === item.title ? 'bg-sky-50/50' : ''}`}
@@ -372,8 +362,8 @@ function App() {
                     </h3>
                     <span className="text-[10px] px-2 py-0.5 bg-sky-100 text-sky-800 font-semibold rounded-full uppercase tracking-wider">Fast and Accurate</span>
                   </div>
-                  
-                  <div className="flex-1 min-h-[220px] bg-slate-50 rounded-lg p-4 overflow-y-auto">
+
+                  <div className="h-auto bg-slate-50 rounded-lg p-4">
                     {loadingSummary ? (
                       <div className="h-full flex flex-col justify-center items-center space-y-2">
                         <div className="w-8 h-8 border-4 border-emerald-500 border-t-transparent rounded-full animate-spin"></div>
@@ -397,7 +387,7 @@ function App() {
                     </h3>
                     <div className="flex items-center space-x-2">
                       {selectedArticle?.url && (
-                        <a 
+                        <a
                           href={selectedArticle.url}
                           target="_blank"
                           rel="noopener noreferrer"
@@ -414,7 +404,7 @@ function App() {
                     </div>
                   </div>
 
-                  <div className="flex-1 min-h-[220px] max-h-[260px] bg-slate-50 rounded-lg p-4 text-xs text-slate-600 leading-relaxed overflow-y-auto">
+                  <div className="h-[430px] bg-slate-50 rounded-lg p-4 text-xs text-slate-600 leading-relaxed overflow-y-auto">
                     {selectedArticle ? (
                       <div>
                         <h4 className="font-bold text-slate-850 text-sm mb-2">{selectedArticle.title}</h4>
@@ -463,7 +453,7 @@ function App() {
                     news.slice(0, 5).map((item, i) => (
                       <li key={i}>
                         {item.url ? (
-                          <a 
+                          <a
                             href={item.url}
                             target="_blank"
                             rel="noopener noreferrer"
@@ -531,12 +521,12 @@ function App() {
                     <div className="flex justify-center items-center space-x-12 mt-3">
                       <div className="text-center">
                         <div className="text-xl md:text-2xl font-black">{selectedSchedule.away_team}</div>
-                        <div className="text-xs text-sky-300 font-bold mt-1">선발: {TEAM_PITCHERS[selectedSchedule.away_team] || '투수'}</div>
+                        <div className="text-xs text-sky-300 font-bold mt-1">선발: {selectedSchedule.away_pitcher || '미정'}</div>
                       </div>
                       <div className="text-2xl md:text-3xl font-black italic text-emerald-400 bg-slate-800/80 px-4 py-1 rounded-lg border border-slate-700">VS</div>
                       <div className="text-center">
                         <div className="text-xl md:text-2xl font-black">{selectedSchedule.home_team}</div>
-                        <div className="text-xs text-sky-300 font-bold mt-1">선발: {TEAM_PITCHERS[selectedSchedule.home_team] || '투수'}</div>
+                        <div className="text-xs text-sky-300 font-bold mt-1">선발: {selectedSchedule.home_pitcher || '미정'}</div>
                       </div>
                     </div>
                   </div>
@@ -547,13 +537,14 @@ function App() {
                     <div className="bg-amber-50/40 border border-amber-300/80 rounded-xl p-5 shadow-sm flex flex-col space-y-4">
                       <div className="flex justify-between items-center pb-2 border-b border-amber-200">
                         <h3 className="font-extrabold text-slate-800 text-sm">
-                          [원정] {selectedSchedule.away_team} {TEAM_PITCHERS[selectedSchedule.away_team] || '선발'} 사주
+                          [원정] {selectedSchedule.away_team} {selectedSchedule.away_pitcher || '미정'} 사주
                         </h3>
                         <button
-                          onClick={() => fetchSaju(TEAM_PITCHERS[selectedSchedule.away_team] || '투수', selectedSchedule.home_team, selectedSchedule.stadium, false)}
-                          className="text-[10px] font-bold text-amber-900 bg-amber-200/60 hover:bg-amber-200 px-2 py-0.5 rounded transition border border-amber-300"
+                          disabled={!selectedSchedule.away_pitcher || selectedSchedule.away_pitcher === '미정'}
+                          onClick={() => fetchSaju(selectedSchedule.away_pitcher, selectedSchedule.home_team, selectedSchedule.stadium, false)}
+                          className={`text-[10px] font-bold px-2.5 py-0.5 rounded transition border ${(!selectedSchedule.away_pitcher || selectedSchedule.away_pitcher === '미정') ? 'bg-slate-200 text-slate-400 border-slate-300 cursor-not-allowed' : 'text-amber-900 bg-amber-200/60 hover:bg-amber-200 border-amber-300'}`}
                         >
-                          도사님께 점괘 묻기
+                          {(!selectedSchedule.away_pitcher || selectedSchedule.away_pitcher === '미정') ? '선발 미정' : '도사님께 점괘 묻기'}
                         </button>
                       </div>
                       <div className="flex-1 min-h-[400px] max-h-[500px] bg-amber-100/20 rounded-lg p-4 overflow-y-auto leading-relaxed border border-amber-250/50 shadow-inner">
@@ -578,13 +569,14 @@ function App() {
                     <div className="bg-amber-50/40 border border-amber-300/80 rounded-xl p-5 shadow-sm flex flex-col space-y-4">
                       <div className="flex justify-between items-center pb-2 border-b border-amber-200">
                         <h3 className="font-extrabold text-slate-800 text-sm">
-                          [홈] {selectedSchedule.home_team} {TEAM_PITCHERS[selectedSchedule.home_team] || '선발'} 사주
+                          [홈] {selectedSchedule.home_team} {selectedSchedule.home_pitcher || '미정'} 사주
                         </h3>
                         <button
-                          onClick={() => fetchSaju(TEAM_PITCHERS[selectedSchedule.home_team] || '투수', selectedSchedule.away_team, selectedSchedule.stadium, true)}
-                          className="text-[10px] font-bold text-amber-900 bg-amber-200/60 hover:bg-amber-200 px-2 py-0.5 rounded transition border border-amber-300"
+                          disabled={!selectedSchedule.home_pitcher || selectedSchedule.home_pitcher === '미정'}
+                          onClick={() => fetchSaju(selectedSchedule.home_pitcher, selectedSchedule.away_team, selectedSchedule.stadium, true)}
+                          className={`text-[10px] font-bold px-2.5 py-0.5 rounded transition border ${(!selectedSchedule.home_pitcher || selectedSchedule.home_pitcher === '미정') ? 'bg-slate-200 text-slate-400 border-slate-300 cursor-not-allowed' : 'text-amber-900 bg-amber-200/60 hover:bg-amber-200 border-amber-300'}`}
                         >
-                          도사님께 점괘 묻기
+                          {(!selectedSchedule.home_pitcher || selectedSchedule.home_pitcher === '미정') ? '선발 미정' : '도사님께 점괘 묻기'}
                         </button>
                       </div>
                       <div className="flex-1 min-h-[400px] max-h-[500px] bg-amber-100/20 rounded-lg p-4 overflow-y-auto leading-relaxed border border-amber-250/50 shadow-inner">

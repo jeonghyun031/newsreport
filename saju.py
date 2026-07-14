@@ -1,5 +1,6 @@
 import os
 import pymysql
+import requests
 from openai import OpenAI
 
 # =========================================================================
@@ -156,12 +157,21 @@ def fetch_daum_news_summary(pitcher_name, conn):
 # =========================================================================
 
 system_instruction = """
-너는 KBO 프로야구 데이터와 다음(daum.net) 뉴스 기사를 기반으로 오늘 경기 선발 투수의 운세를 점치는 40년 경력의 용한 야구 무속인 '야잘알 도사'이다.
+너는 KBO 프로야구 데이터, 선수의 생년월일 정보, 그리고 다음(daum.net) 뉴스 기사를 융합하여 오늘 경기 선발 투수의 운세를 점치는 40년 경력의 신비롭고 영험한 야구 역술인 '야잘알 도사'이다.
+
+[사주 명리 가이드 (컴투스온 개발자 가이드 준수)]
+1. **객관성 확보 및 편향 배제**: 사용자의 기대치나 유도 질문(예: 특정 팀의 편을 들거나 특정 결과를 유도하는 뉘앙스)에 휘둘리지 말고, 제공된 생년월일과 팩트 스탯에 기반하여 냉철하고 엄정하게 명리학적 밸런스를 감정하라.
+2. **구체적 수치(승패/스코어)의 맹신 방지**: "오늘 반드시 8이닝 무실점 완봉승을 한다"는 식의 허황되고 확정적인 미래 예측 수치는 명리학적으로 맞지 않으며 AI의 한계이므로 삼가라. 마운드 위에서 흐를 기운의 흐름과 조율하는 전략적 방향성(액막이, 경기 조율 타이밍) 위주로 조언하라.
+3. **타고난 기질 및 오행 밸런스 분석**: KBO Talent 스탯을 동양 철학의 오행(五行)으로 정밀하게 비유하여 풀어라:
+   - 순수 구위(Stuff) -> 화(火)의 기운 (마운드를 녹일 듯한 맹렬한 불꽃 기세)
+   - 제구력(Location) -> 금(金)의 기운 (칼날처럼 차갑고 예리한 쇠붙이의 통제력)
+   - 위기상황 담력(Crisis Mgmt) -> 토(土)의 기운 (풍파에도 흔들리지 않는 태산의 우직함)
+   이 3가지 오행의 생극제화(生剋制化) 균형을 바탕으로 투수의 타고난 그날의 멘탈적/피지컬적 강점을 도출하라.
+4. **상극(相剋) 살풀이**: 뉴스 기사에 나타난 라이벌/천적 타자와의 매치업을 오행의 상극 관계(예: 목극토 木剋土, 화극금 火剋金)로 해석하여 어느 타석에 큰 액운이 끼어 있는지 짚고 대처법을 권하라.
 
 [말투 가이드]
-1. 무속인 특유의 고풍스럽고 엄숙한 말투("~이로다", "~하구나", "상극일세")를 쓰되, 야구 커뮤니티의 밈과 비속어 직전의 매운맛 드립을 적절히 섞어라.
-2. 스탯이 좋으면 '기가 충만하다', 제구(Location)가 불안하면 '볼넷살(煞)'이 끼었다, 박빙에 약하면 '새가슴살'이 뻗쳤다고 은유해라.
-3. 절대 뻔하게 '승리한다/패배한다'를 기계적으로 예측하지 말고, 오늘 마운드 위에서 겪을 고난과 영광을 시각적으로 묘사하라.
+1. 무속인 특유의 고풍스럽고 엄숙한 말투("~이로다", "~하구나", "상극일세")를 쓰되, 야구 커뮤니티의 밈과 매운맛 드립을 한두 스푼 가미하라.
+2. 마운드 위에서 펼쳐질 투쟁과 피칭의 흐름을 한 폭의 사주 신선도처럼 시각적이고 웅장하게 서술하라.
 
 [출력 형식]
 반드시 다음 구조로만 출력하고, 마크다운(Markdown) 예쁜 양식으로 가독성 좋게 꾸며라. 사족은 절대 붙이지 마라.
@@ -172,15 +182,20 @@ system_instruction = """
 ## 4. 🧧 팬들을 위한 행운의 관전 비책
 """
 
-def get_baseball_saju(pitcher_name, opponent_team="상대팀", stadium_name="야구장"):
-    # 1) 데이터베이스 커넥션 생성 시도
+def get_baseball_saju(pitcher_name, opponent_team="상대팀", stadium_name="야구장", game_date=None):
+    # 1) 경기 일자(오늘의 일진 날짜) 기본값 세팅
+    import datetime
+    if not game_date:
+        game_date = datetime.date.today().strftime("%Y-%m-%d")
+
+    # 2) 데이터베이스 커넥션 생성 시도
     conn = None
     try:
         conn = get_db_connection()
     except Exception as e:
         print(f"⚠️ DB 연결 비활성화 또는 설정 정보 오류 (로컬 백업 모드 실행): {e}")
 
-    # 2) 각 데이터 소스별 모듈을 통한 개별 수집 (매치업 상대팀 및 구장 정보 공급)
+    # 3) 각 데이터 소스별 모듈을 통한 개별 수집 (매치업 상대팀 및 구장 정보 공급)
     stats = fetch_kbo_talent_stats(pitcher_name, opponent_team, stadium_name, conn)
     news_list = fetch_daum_news_summary(pitcher_name, conn)
     
@@ -188,7 +203,7 @@ def get_baseball_saju(pitcher_name, opponent_team="상대팀", stadium_name="야
     if conn:
         conn.close()
 
-    # 3) 동적 LLM 주입 텍스트 조립
+    # 4) 동적 LLM 주입 텍스트 조립
     news_text = ""
     for idx, news in enumerate(news_list, 1):
         news_text += f"{idx}. 제목: {news['title']}\n   내용: {news['content_raw'][:150]}...\n"
@@ -200,6 +215,7 @@ def get_baseball_saju(pitcher_name, opponent_team="상대팀", stadium_name="야
 [오늘의 선발 투수 정보]
 - 이름: {pitcher_name}
 - 생년월일 (사주 풀이용): {birthday}
+- 경기 일자 (오늘의 일진 판별용): {game_date}
 - 소속 팀: {stats['team']}
 - 매치업: vs {stats.get('opponent', '상대팀')} ({stats.get('stadium', '야구장')})
 
@@ -214,21 +230,42 @@ def get_baseball_saju(pitcher_name, opponent_team="상대팀", stadium_name="야
 
     print("🔮 야잘알 도사가 엽전을 던져 운세를 보고 있습니다... 잠시만 기다리시게...\n")
     
+    # system_instruction을 user 롤 프롬프트 상단에 강결합하여 전달 (API 제약 대응)
+    full_prompt = f"""{system_instruction}
+
+위 지침을 엄격히 준수하여 아래 제공되는 오늘 선발 투수의 운세를 명리학에 기반해 상세히 점쳐 주시오.
+
+{user_prompt}"""
+
+    url = "https://code.cu.ac.kr/llm/v1/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {API_KEY}",
+        "Content-Type": "application/json",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+    }
+    data = {
+        "model": "Qwen/Qwen3.5-35B-A3B-FP8",
+        "messages": [
+            {"role": "user", "content": full_prompt}
+        ],
+        "stream": False
+    }
+    
     try:
-        response = client.chat.completions.create(
-            model="Qwen/Qwen3.5-35B-A3B-FP8",
-            messages=[
-                {"role": "system", "content": system_instruction},
-                {"role": "user", "content": user_prompt}
-            ],
-            temperature=0.8, 
-            max_tokens=1500
-        )
-        return response.choices[0].message.content
+        resp = requests.post(url, headers=headers, json=data)
+        resp.raise_for_status()
+        resp_data = resp.json()
+        choices = resp_data.get("choices", [])
+        if not choices:
+            return "❌ 도사님이 오늘 점괘를 내지 못하시는구나. (LLM 응답 비어있음)"
+        content = choices[0].get("message", {}).get("content")
+        saju_result = content.strip() if content else "❌ 도사님이 오늘 점괘를 내지 못하시는구나. (content 비어있음)"
+        return saju_result
     except Exception as e:
         err_msg = f"❌ 액운이 끼어 API 호출에 실패했구나!: {e}"
         print(err_msg)
         return err_msg
 
 if __name__ == "__main__":
-    get_baseball_saju("원태인")
+    # 단독 테스트를 위해 결과를 콘솔에 출력합니다.
+    print(get_baseball_saju("원태인"))

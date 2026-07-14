@@ -18,7 +18,7 @@
     "test": "react-scripts test",
     "eject": "react-scripts eject",
     "tailwind-init": "tailwindcss init -p",
-    "dev": "concurrently \"uvicorn ../backend.main:app --reload\" \"react-scripts start\""
+    "dev": "concurrently \"cd ../backend && uvicorn main:app --reload\" \"react-scripts start\""
   },
   "eslintConfig": {
     "extends": [
