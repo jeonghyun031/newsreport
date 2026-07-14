@@ -1,0 +1,37 @@
+version: '3.8'
+
+services:
+  spark-jupyter:
+    image: jupyter/pyspark-notebook:latest
+    container_name: spark-container
+    ports:
+      - "8889:8888"   # Jupyter Lab 웹 포트 (접속: http://localhost:8889)
+      - "4045:4040"   # Spark Web UI 포트
+    volumes:
+      - ./workspace:/home/jovyan/work
+    environment:
+      - JUPYTER_ENABLE_LAB=yes
+      - JUPYTER_TOKEN=spark123
+      - SPARK_OPTS=--packages com.mysql:mysql-connector-j:8.3.0
+    restart: always
+# ==============================================
+  airflow:
+    image: puckel/docker-airflow:1.10.9
+    restart: always
+    volumes:
+      - ./dags:/usr/local/airflow/dags
+    ports:
+      - "8080:8080"
+    command: webserver
+    environment:
+      - LOAD_EX=n
+      - EXECUTOR=Sequential # 💡 스케줄러와 웹서버를 연동하기 위한 가벼운 실행기 지정
+
+
+# Host (엔드포인트 주소): 예) my-database.c123456.ap-northeast-2.rds.amazonaws.com
+
+# Port: 보통 3306
+
+# User / Password: DB 접속 계정 및 비밀번호
+
+# Database Name: 데이터가 들어갈 테이블 스페이스 이름
