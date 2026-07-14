@@ -141,6 +141,13 @@ def main():
                 title = title_el.text.strip()
                 doct = doct_el.text.strip() if doct_el else ""
                 
+                # 기사 URL 추출 (a 태그 내 href 속성 획득)
+                news_url = title_el.get("href", "").strip() if title_el else ""
+                if not news_url and doct_el:
+                    news_url = doct_el.get("href", "").strip()
+                if news_url and not news_url.startswith("http"):
+                    news_url = "https://sports.daum.net" + news_url
+                
                 # 언론사 및 시간 데이터 추출
                 txt_infos = info_el.select(".txt_info") if info_el else []
                 if len(txt_infos) >= 2:
@@ -180,7 +187,8 @@ def main():
                     "날짜": rk_date,
                     "제목": title,
                     "언론사": script,
-                    "내용": doct_clean
+                    "내용": doct_clean,
+                    "주소": news_url
                 })
             
             except Exception as e:
@@ -190,8 +198,8 @@ def main():
         # DataFrame 생성 및 저장
         df = pd.DataFrame(news_list)
         if not df.empty:
-            df = df[["날짜", "제목", "언론사", "내용"]] # 오타 방지 안전장치
-            df.columns = ["날짜", "제목", "언론사", "내용"] # 컬럼명 강제 통일
+            df = df[["날짜", "제목", "언론사", "내용", "주소"]] # 오타 방지 안전장치
+            df.columns = ["날짜", "제목", "언론사", "내용", "주소"] # 컬럼명 강제 통일
 
             current_time = datetime.now().strftime("%Y%m%d_%H%M")
             filename = f"NewsList({news_date})daum.csv"
