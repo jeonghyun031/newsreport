@@ -11,7 +11,7 @@ function App() {
   // FastAPI 백엔드 주소
   const BACKEND_URL = 'http://localhost:8000';
 
-  // 뉴스 목록 로드 & 자동 요약 연동
+  // 뉴스 목록 로드 & 백그라운드 자동 요약 연동
   const fetchNews = async (queryVal = '') => {
     setLoadingNews(true);
     setLoadingSummary(true);
@@ -25,10 +25,14 @@ function App() {
       const data = await res.json();
       setNews(data);
       
+      // 기사 목록 표를 화면에 즉시 렌더링하도록 목록 스피너 먼저 종료! (체감 0초 렌더링)
+      setLoadingNews(false);
+      
       if (data.length > 0) {
-        setSelectedArticle(data[0]);
-        // 뉴스 로드 완료 후 자동으로 3대 키워드 브리핑 요약 실행 (real-time 핑퐁 없이 단발식 자동 처리)
-        await runAutomaticSummary(data);
+        // 첫 번째 기사 디폴트 선택 및 본문 Lazy 로드 기동
+        fetchSelectedArticleContent(data[0]);
+        // ⚡ AI 3줄 요약은 await 하지 않고 백그라운드 비동기 쓰레드로 즉시 쏩니다.
+        runAutomaticSummary(queryVal);
       } else {
         setSelectedArticle(null);
         setSummary('요약할 뉴스 기사가 없습니다.');
@@ -37,24 +41,18 @@ function App() {
     } catch (err) {
       console.error(err);
       alert('DB 뉴스 기사를 가져오는 데 실패했습니다.');
-      setLoadingSummary(false);
-    } finally {
       setLoadingNews(false);
+      setLoadingSummary(false);
     }
   };
 
-  // 백엔드 Qwen 3대 키워드 브리핑 자동 호출
-  const runAutomaticSummary = async (articlesData) => {
+  // 백엔드 Qwen 3대 키워드 브리핑 자동 호출 (가벼운 query만 백엔드로 전송)
+  const runAutomaticSummary = async (queryVal) => {
     try {
-      const articles = articlesData.map(n => n.content).filter(Boolean);
-      if (articles.length === 0) {
-        setSummary('요약할 뉴스 본문이 없습니다.');
-        return;
-      }
       const res = await fetch(`${BACKEND_URL}/api/summarize`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ articles })
+        body: JSON.stringify({ query: queryVal })
       });
       if (!res.ok) throw new Error('요약 API 실패');
       const data = await res.json();
@@ -64,6 +62,32 @@ function App() {
       setSummary('요약을 가져오는 데 실패했습니다. 백엔드 서버 상태를 확인해 주세요.');
     } finally {
       setLoadingSummary(false);
+    }
+  };
+
+  // 특정 기사의 본문을 실시간으로 개별 로드 (Lazy Loading)
+  const fetchSelectedArticleContent = async (item) => {
+    // 이미 본문이 로드되어 캐싱되어 있다면 API 중복 호출 방지
+    if (item.content) {
+      setSelectedArticle(item);
+      return;
+    }
+    
+    // 본문 로드 시작
+    try {
+      setSelectedArticle({ ...item, content: '본문을 불러오는 중입니다...' });
+      const res = await fetch(`${BACKEND_URL}/api/news/content?title=${encodeURIComponent(item.title)}`);
+      if (!res.ok) throw new Error('본문 로드 실패');
+      const data = await res.json();
+      
+      const updatedArticle = { ...item, content: data.content };
+      setSelectedArticle(updatedArticle);
+      
+      // 목록 데이터에도 본문을 캐싱하여 재클릭 시 고속 렌더링
+      setNews(prevNews => prevNews.map(n => n.title === item.title ? updatedArticle : n));
+    } catch (err) {
+      console.error(err);
+      setSelectedArticle({ ...item, content: '본문을 불러오는 데 실패했습니다. 다시 시도해 주세요.' });
     }
   };
 
@@ -189,7 +213,7 @@ function App() {
                     {news.map((item, idx) => (
                       <tr 
                         key={idx}
-                        onClick={() => setSelectedArticle(item)}
+                        onClick={() => fetchSelectedArticleContent(item)}
                         className={`hover:bg-slate-50 cursor-pointer transition ${selectedArticle?.title === item.title ? 'bg-sky-50/50' : ''}`}
                       >
                         <td className="px-5 py-3.5 whitespace-nowrap text-xs text-slate-500">
@@ -298,30 +322,34 @@ function App() {
             </div>
           </div>
 
-          {/* 많이 본 KBO 뉴스 위젯 */}
+          {/* 많이 본 KBO 뉴스 위젯 (DB 실시간 뉴스 및 실제 수집 URL 동적 연동) */}
           <div className="bg-white p-5 rounded-xl shadow-sm border border-slate-100 space-y-4">
             <h3 className="font-bold text-sm text-slate-800 border-b border-slate-100 pb-2">
               많이 본 KBO 뉴스
             </h3>
             <ul className="space-y-3">
-              {[
-                { title: "1. 한화 이글스, 후반기 대반격 위한 마운드 개편 선언", url: "https://v.daum.net/v/20240710114008163" },
-                { title: "2. KIA 타이거즈 홈런포 작렬... 전반기 1위 수성 비결", url: "https://v.daum.net/v/20240711093012442" },
-                { title: "3. 오승환, 통산 550세이브 금자탑 달성", url: "https://v.daum.net/v/20240712152011982" },
-                { title: "4. 류현진, 한·미 통산 2,500탈삼진 대기록 눈앞", url: "https://v.daum.net/v/20240713081015603" },
-                { title: "5. KBO리그 지배하는 베테랑 전성시대", url: "https://v.daum.net/v/20240713175022814" }
-              ].map((item, i) => (
-                <li key={i}>
-                  <a 
-                    href={item.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="block p-3 bg-slate-50 hover:bg-emerald-50 rounded border border-slate-100 hover:border-emerald-200 transition text-xs font-semibold text-slate-700 hover:text-slate-900 cursor-pointer shadow-sm hover:shadow"
-                  >
-                    {item.title}
-                  </a>
-                </li>
-              ))}
+              {news.length > 0 ? (
+                news.slice(0, 5).map((item, i) => (
+                  <li key={i}>
+                    {item.url ? (
+                      <a 
+                        href={item.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="block p-3 bg-slate-50 hover:bg-emerald-50 rounded border border-slate-100 hover:border-emerald-200 transition text-xs font-semibold text-slate-700 hover:text-slate-900 cursor-pointer shadow-sm hover:shadow"
+                      >
+                        {`${i + 1}. ${item.title}`}
+                      </a>
+                    ) : (
+                      <div className="block p-3 bg-slate-50 rounded border border-slate-100 text-xs font-semibold text-slate-400">
+                        {`${i + 1}. ${item.title} (원문 없음)`}
+                      </div>
+                    )}
+                  </li>
+                ))
+              ) : (
+                <div className="text-slate-400 text-xs py-4 text-center">기사를 불러오는 중입니다...</div>
+              )}
             </ul>
           </div>
         </section>
