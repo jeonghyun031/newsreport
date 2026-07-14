@@ -33,7 +33,6 @@ if env_path:
 else:
     print("⚠️ .env 파일을 찾을 수 없어 기본/시스템 환경변수를 사용합니다.")
 
-<<<<<<< HEAD
 # 데이터프레임 생성
 df = spark.createDataFrame(raw_news_data, schema)
 print("\n📊 [1. 정제 전 원본 뉴스 데이터]")
@@ -57,13 +56,11 @@ cleaned_df.show(truncate=False)
 aws_rds_endpoint = "your-aws-rds-endpoint.amazonaws.com"
 db_name = "articel_db"
 jdbc_url = f"jdbc:mysql://{aws_rds_endpoint}:3306/{db_name}"
-=======
 aws_rds_endpoint = env_dict.get("AWS_RDS_ENDPOINT", os.getenv("AWS_RDS_ENDPOINT", "database-1.cf0ecym6emk4.ap-southeast-2.rds.amazonaws.com"))
 db_port = env_dict.get("DB_PORT", os.getenv("DB_PORT", "3306"))
 db_user = env_dict.get("DB_USER", os.getenv("DB_USER", "admin"))
 db_password = env_dict.get("DB_PASSWORD", os.getenv("DB_PASSWORD", "12341234"))
-db_name = env_dict.get("DB_NAME", os.getenv("DB_NAME", "test_db"))
->>>>>>> prototype
+db_name = env_dict.get("DB_NAME", os.getenv("DB_NAME", "articel_db"))
 
 jdbc_url = f"jdbc:mysql://{aws_rds_endpoint}:{db_port}/{db_name}?useSSL=false&allowPublicKeyRetrieval=true"
 db_properties = {
