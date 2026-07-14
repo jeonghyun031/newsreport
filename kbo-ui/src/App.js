@@ -33,21 +33,40 @@ function App() {
   // FastAPI 백엔드 주소
   const BACKEND_URL = 'http://localhost:8000';
 
-  // 경기 일정 조회 API 연동
+  // 경기 일정 조회 API 연동 (당일 경기 필터링 및 Fallback)
   const fetchSchedules = async () => {
     setLoadingSchedules(true);
     try {
       const res = await fetch(`${BACKEND_URL}/api/schedule`);
       if (!res.ok) throw new Error('경기 일정 API 응답 실패');
       const data = await res.json();
-      setSchedules(data);
-      if (data.length > 0) {
-        setSelectedSchedule(data[0]); // 첫 경기 자동 선택
-        // 양팀 선발 사주 자동 패치 기동
-        const awayPitcher = TEAM_PITCHERS[data[0].away_team] || '투수';
-        const homePitcher = TEAM_PITCHERS[data[0].home_team] || '투수';
-        fetchSaju(awayPitcher, false);
-        fetchSaju(homePitcher, true);
+      
+      // 당일 경기 필터링 (로컬 날짜 추출 YYYYMMDD)
+      const localToday = new Date();
+      const yyyy = localToday.getFullYear();
+      const mm = String(localToday.getMonth() + 1).padStart(2, '0');
+      const dd = String(localToday.getDate()).padStart(2, '0');
+      const todayStr = `${yyyy}${mm}${dd}`; 
+      
+      let filtered = data.filter(sched => sched.date === todayStr);
+      if (filtered.length === 0 && data.length > 0) {
+        // 오늘 날짜 경기가 DB에 없다면, 존재 기사 날짜 중 가장 최근 유효 날짜의 경기를 하루치 반환
+        const availableDates = [...new Set(data.map(s => s.date))].sort();
+        const fallbackDate = availableDates[availableDates.length - 1] || data[0].date;
+        filtered = data.filter(sched => sched.date === fallbackDate);
+      }
+      
+      setSchedules(filtered);
+      
+      if (filtered.length > 0) {
+        setSelectedSchedule(filtered[0]); // 첫 경기 자동 선택
+        // 양팀 선발 사주 자동 패치 기동 (상대팀 및 구장 정보 동시 공급)
+        const awayPitcher = TEAM_PITCHERS[filtered[0].away_team] || '투수';
+        const homePitcher = TEAM_PITCHERS[filtered[0].home_team] || '투수';
+        fetchSaju(awayPitcher, filtered[0].home_team, filtered[0].stadium, false);
+        fetchSaju(homePitcher, filtered[0].away_team, filtered[0].stadium, true);
+      } else {
+        setSelectedSchedule(null);
       }
     } catch (err) {
       console.error(err);
@@ -57,13 +76,14 @@ function App() {
     }
   };
 
-  // 개별 선발 투수의 Qwen AI 사주풀이 호출 (Lazy loading)
-  const fetchSaju = async (pitcherName, isHome) => {
+  // 개별 선발 투수의 Qwen AI 사주풀이 호출 (Lazy loading 및 파라미터 공급)
+  const fetchSaju = async (pitcherName, opponentTeam, stadiumName, isHome) => {
     const type = isHome ? 'home' : 'away';
     setLoadingSaju(prev => ({ ...prev, [type]: true }));
     setSajuResult(prev => ({ ...prev, [type]: '' }));
     try {
-      const res = await fetch(`${BACKEND_URL}/api/saju?pitcher=${encodeURIComponent(pitcherName)}`);
+      const url = `${BACKEND_URL}/api/saju?pitcher=${encodeURIComponent(pitcherName)}&opponent=${encodeURIComponent(opponentTeam)}&stadium=${encodeURIComponent(stadiumName)}`;
+      const res = await fetch(url);
       if (!res.ok) throw new Error('사주 API 응답 실패');
       const data = await res.json();
       setSajuResult(prev => ({ ...prev, [type]: data.saju }));
@@ -80,9 +100,9 @@ function App() {
     setSelectedSchedule(sched);
     const awayPitcher = TEAM_PITCHERS[sched.away_team] || '투수';
     const homePitcher = TEAM_PITCHERS[sched.home_team] || '투수';
-    // 양 팀 선발 투수 사주풀이 실시간 로드
-    fetchSaju(awayPitcher, false);
-    fetchSaju(homePitcher, true);
+    // 양 팀 선발 투수 사주풀이 실시간 로드 (상대팀 및 경기장 공급)
+    fetchSaju(awayPitcher, sched.home_team, sched.stadium, false);
+    fetchSaju(homePitcher, sched.away_team, sched.stadium, true);
   };
 
   // 뉴스 목록 로드 & 백그라운드 자동 요약 연동
@@ -515,7 +535,7 @@ function App() {
                           [원정] {selectedSchedule.away_team} {TEAM_PITCHERS[selectedSchedule.away_team] || '선발'} 사주
                         </h3>
                         <button
-                          onClick={() => fetchSaju(TEAM_PITCHERS[selectedSchedule.away_team] || '투수', false)}
+                          onClick={() => fetchSaju(TEAM_PITCHERS[selectedSchedule.away_team] || '투수', selectedSchedule.home_team, selectedSchedule.stadium, false)}
                           className="text-[10px] font-bold text-amber-900 bg-amber-200/60 hover:bg-amber-200 px-2 py-0.5 rounded transition border border-amber-300"
                         >
                           도사님께 점괘 묻기
@@ -546,7 +566,7 @@ function App() {
                           [홈] {selectedSchedule.home_team} {TEAM_PITCHERS[selectedSchedule.home_team] || '선발'} 사주
                         </h3>
                         <button
-                          onClick={() => fetchSaju(TEAM_PITCHERS[selectedSchedule.home_team] || '투수', true)}
+                          onClick={() => fetchSaju(TEAM_PITCHERS[selectedSchedule.home_team] || '투수', selectedSchedule.away_team, selectedSchedule.stadium, true)}
                           className="text-[10px] font-bold text-amber-900 bg-amber-200/60 hover:bg-amber-200 px-2 py-0.5 rounded transition border border-amber-300"
                         >
                           도사님께 점괘 묻기

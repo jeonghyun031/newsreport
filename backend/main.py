@@ -231,14 +231,14 @@ def get_schedule():
         raise HTTPException(status_code=500, detail=f"경기 일정 조회 실패: {str(e)}")
 
 @app.get("/api/saju")
-def get_pitcher_saju(pitcher: str):
+def get_pitcher_saju(pitcher: str, opponent: Optional[str] = "상대팀", stadium: Optional[str] = "야구장"):
     """
     Qwen LLM 기반 '야잘알 도사' 투수 사주풀이 결과를 생성하여 반환합니다.
     """
     if not pitcher or not pitcher.strip():
         raise HTTPException(status_code=400, detail="투수 이름을 입력해 주세요.")
     try:
-        saju_text = get_baseball_saju(pitcher.strip())
+        saju_text = get_baseball_saju(pitcher.strip(), opponent.strip(), stadium.strip())
         return {"saju": saju_text}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"사주 생성 실패: {str(e)}")

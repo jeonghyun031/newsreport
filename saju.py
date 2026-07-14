@@ -27,6 +27,22 @@ client = OpenAI(
 )
 
 # =========================================================================
+# KBO 구단별 대표 선발 투수 생년월일 사전 (사주 명리 정합성 확보용)
+# =========================================================================
+PITCHER_BIRTHDAYS = {
+    "원태인": "2000년 4월 6일",
+    "류현진": "1987년 3월 25일",
+    "양현종": "1988년 3월 1일",
+    "고영표": "1991년 9월 16일",
+    "곽빈": "1999년 5월 28일",
+    "임찬규": "1992년 11월 20일",
+    "김광현": "1988년 7월 22일",
+    "반즈": "1995년 10월 1일",
+    "하트": "1992년 11월 23일",
+    "후라도": "1996년 1월 30일"
+}
+
+# =========================================================================
 # [2] 로컬 백업/Mock 데이터 정의 (DB 미연동 시 롤백용)
 # =========================================================================
 MOCK_TALENT_STATS = {
@@ -60,15 +76,14 @@ def get_db_connection():
     )
 
 
-def fetch_kbo_talent_stats(pitcher_name, conn):
+def fetch_kbo_talent_stats(pitcher_name, opponent_team="상대팀", stadium_name="야구장", conn=None):
     """
     KBO Talent 정형 데이터베이스에서 선수의 피칭 세부 지표를 쿼리합니다.
-    (추후 kbo_talent 스탯 DB 테이블 구축 시, 주석 처리된 쿼리 부분을 활성화하여 사용하세요.)
     """
     # 1) 기본 롤백 데이터 설정
     stats = MOCK_TALENT_STATS.get(pitcher_name, {"team": "KBO 구단", "stuff": 100, "location": 100, "crisis_mgmt": 100})
-    stats["opponent"] = "KIA 타이거즈"  # 경기 매치업에 따른 상대팀 정보 (임시)
-    stats["stadium"] = "광주 챔피언스필드"  # 경기 장소 (임시)
+    stats["opponent"] = opponent_team  # 경기 매치업에 따른 실제 상대팀 정보 연동
+    stats["stadium"] = stadium_name  # 실제 경기 장소 연동
     
     if not conn:
         return stats
@@ -157,7 +172,7 @@ system_instruction = """
 ## 4. 🧧 팬들을 위한 행운의 관전 비책
 """
 
-def get_baseball_saju(pitcher_name):
+def get_baseball_saju(pitcher_name, opponent_team="상대팀", stadium_name="야구장"):
     # 1) 데이터베이스 커넥션 생성 시도
     conn = None
     try:
@@ -165,8 +180,8 @@ def get_baseball_saju(pitcher_name):
     except Exception as e:
         print(f"⚠️ DB 연결 비활성화 또는 설정 정보 오류 (로컬 백업 모드 실행): {e}")
 
-    # 2) 각 데이터 소스별 모듈을 통한 개별 수집 (유연한 연결구조)
-    stats = fetch_kbo_talent_stats(pitcher_name, conn)
+    # 2) 각 데이터 소스별 모듈을 통한 개별 수집 (매치업 상대팀 및 구장 정보 공급)
+    stats = fetch_kbo_talent_stats(pitcher_name, opponent_team, stadium_name, conn)
     news_list = fetch_daum_news_summary(pitcher_name, conn)
     
     # DB 사용 완료 후 종료
@@ -178,9 +193,13 @@ def get_baseball_saju(pitcher_name):
     for idx, news in enumerate(news_list, 1):
         news_text += f"{idx}. 제목: {news['title']}\n   내용: {news['content_raw'][:150]}...\n"
 
+    # 투수의 생년월일 매핑
+    birthday = PITCHER_BIRTHDAYS.get(pitcher_name, "알 수 없음 (도사의 혜안으로 사주 추출)")
+
     user_prompt = f"""
 [오늘의 선발 투수 정보]
 - 이름: {pitcher_name}
+- 생년월일 (사주 풀이용): {birthday}
 - 소속 팀: {stats['team']}
 - 매치업: vs {stats.get('opponent', '상대팀')} ({stats.get('stadium', '야구장')})
 
