@@ -15,17 +15,20 @@ services:
       - SPARK_OPTS=--packages com.mysql:mysql-connector-j:8.3.0
     restart: always
 # ==============================================
+# docker compose run --rm airflow-worker airflow db init
+# 실행전 디비 초기화 과정 필요
   airflow:
-    image: puckel/docker-airflow:1.10.9
+    image: apache/airflow:2.7.1
     restart: always
     volumes:
-      - ./dags:/usr/local/airflow/dags
+      - ./airflow_project/dags:/opt/airflow/dags
+      
     ports:
       - "8080:8080"
     command: webserver
     environment:
       - LOAD_EX=n
-      - EXECUTOR=Local # 💡 스케줄러와 웹서버를 연동하기 위한 가벼운 실행기 지정
+      - EXECUTOR=Sequential # 💡 스케줄러와 웹서버를 연동하기 위한 가벼운 실행기 지정
 
 
 # Host (엔드포인트 주소): 예) my-database.c123456.ap-northeast-2.rds.amazonaws.com
