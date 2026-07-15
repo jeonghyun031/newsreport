@@ -92,7 +92,11 @@ services:
       AIRFLOW__CORE__EXECUTOR: SequentialExecutor
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres:5432/airflow
       AIRFLOW__CORE__LOAD_EXAMPLES: "False"
+      _PIP_ADDITIONAL_REQUIREMENTS: ${_PIP_ADDITIONAL_REQUIREMENTS:-fastapi requests}
 
+    env_file:
+      - .env
+      
     command: airflow scheduler
 
     volumes:
@@ -118,6 +122,9 @@ services:
       AIRFLOW__CORE__EXECUTOR: SequentialExecutor
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres:5432/airflow
       AIRFLOW__CORE__LOAD_EXAMPLES: "False"
+      
+    env_file:
+      - .env
 
     ports:
       - "8080:8080"
@@ -133,3 +140,6 @@ services:
 
 volumes:
   airflow_postgres:
+
+
+# Admin ->Variables -> + -> Key : SLACK_WEBHOOK_URL, value : 웹훅 URL airflow에서 저장

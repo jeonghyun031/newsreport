@@ -1,14 +1,16 @@
+import json
 import os
 import re
 import time
-from datetime import datetime, timedelta
-import pandas as pd
 from datetime import datetime, timedelta, timezone
+import pandas as pd
+import requests  # 🌟 fastapi 대신 일반 requests로 수정
 
 # Airflow 관련 오퍼레이터
 from airflow import DAG
 from airflow.operators.python import PythonOperator
 from airflow.operators.bash import BashOperator
+from airflow.exceptions import AirflowException
 
 # 셀레니움 & 뷰티풀수프
 from selenium import webdriver
@@ -54,6 +56,7 @@ def run_pure_crawler(**context):
     지휘관(Airflow) 컨테이너에서 원격 셀레니움을 통해 크롤링을 수행하고, 
     주소(URL) 정보를 포함하여 공유 볼륨의 'raw' 폴더에 CSV를 적재하는 단계입니다.
     """
+    # raise Exception("Slack 알림 테스트") 실패 알람 테스트용
     chrome_options = Options()
     chrome_options.add_argument('--headless') 
     chrome_options.add_argument('--no-sandbox') 
@@ -186,7 +189,15 @@ def run_pure_crawler(**context):
             save_path = os.path.join(SHARED_RAW_DIR, filename)
             
             df.to_csv(save_path, index=False, header=True, encoding="utf-8-sig")
-            print(f"\n[1단계 완료] 공유 볼륨 원본 저장 성공! -> {save_path} (총 {len(df)}건)")
+            len_df = len(df)
+            if len_df <= 0:
+                raise AirflowException("수집된 데이터가 없습니다.")
+            
+            context["ti"].xcom_push(
+                key="crawl_count",
+                value=len_df
+)
+            print(f"\n[1단계 완료] 공유 볼륨 원본 저장 성공! -> {save_path} (총 {len_df}건)")
         else:
             print("수집된 데이터가 없습니다.")
 
@@ -197,21 +208,114 @@ def run_pure_crawler(**context):
         driver.quit()
         print("Chrome 브라우저를 안전하게 종료했습니다.")
 
+def slack_success_alert(message):
 
-# --- Airflow DAG 스케줄 설정 ---
+    webhook_url = os.getenv(
+        "SLACK_WEBHOOK_URL"
+    )
+
+    requests.post(
+        webhook_url,
+        json={
+            "text": message
+        },
+        timeout=10
+    )
+    
+def crawl_success_message(**context):
+
+    count = context["ti"].xcom_pull(
+        task_ids="run_pure_crawler_task",
+        key="crawl_count"
+    )
+
+    slack_success_alert(
+        f"""
+✅ 크롤링 성공
+
+DAG:
+daum_baseball_crawling_spark_pipeline
+
+수집 뉴스:
+{count}건
+"""
+    )
+    
+def on_failure_alert(context):
+    """
+    Task 실패 시 Slack으로 알림 전송
+    """
+    dag_id = context["task_instance"].dag_id
+    task_id = context["task_instance"].task_id
+    logical_date = (
+        context["logical_date"]
+        .astimezone(KST_TIMEZONE)
+        .strftime("%Y-%m-%d %H:%M:%S")
+    )
+    exception = context.get("exception")
+    
+    log_url = context["task_instance"].log_url
+    
+
+    message = (
+        "=====*Airflow 파이프라인 실패 알림*=====\n"
+        f"• DAG : `{dag_id}`\n"
+        f"• Task : `{task_id}`\n"
+        f"• 실행시간 : `{logical_date}` (KST)\n"
+        f"• Error : ```{exception}```\n"
+        f"• 로그 : {log_url}"
+    )
+
+    # Airflow Variable에 저장한 Webhook URL 사용
+    webhook_url = os.getenv("SLACK_WEBHOOK_URL")
+
+    if not webhook_url:
+        raise ValueError("SLACK_WEBHOOK_URL 환경변수가 설정되지 않았습니다.")
+    
+    payload = {
+        "text": message
+    }
+
+    try:
+        response = requests.post(
+            webhook_url,
+            json=payload,
+            timeout=10
+        )
+        response.raise_for_status()
+        print("✅ Slack 알림 전송 성공")
+
+    except requests.exceptions.RequestException as e:
+        print(f"❌ Slack 알림 전송 실패: {e}")
+
+def spark_success_message():
+    slack_success_alert(
+        f"""
+        ✅ Spark ETL 완료
+        
+        DAG:
+        daum_baseball_crawling_spark_pipeline
+
+        MySQL 적재 성공
+        """
+    )
+
+# 🌟 중복 선언되었던 default_args를 하나로 통합 및 콜백 함수 지정
 default_args = {
     'owner': 'COMSW',
     'depends_on_past': False,
     'start_date': datetime(2026, 7, 15),
-    'retries': 1,
+    'retries': 0,
     'retry_delay': timedelta(minutes=5),
+    'on_failure_callback': on_failure_alert  # 태스크 실패 시 슬랙 알림 동작 활성화
 }
 
+# --- Airflow DAG 스케줄 설정 ---
 with DAG(
-    'daum_baseball_distributed_pipeline',
+    'daum_baseball_crawling_spark_pipeline',
     default_args=default_args,
     description='Daum 야구 뉴스 크롤링 후 분산 Spark 컨테이너 전처리 파이프라인',
-    schedule_interval='0 0 * * *', # 한국 시간 기준 매일 오전 9시 실행
+    schedule_interval='0 * * * *', # 한국 시간 기준 매시간 정각 실행 (주석은 9시라고 되어있으나 표현식은 매시간 정각입니다)
     catchup=False,
     tags=['crawling', 'spark', 'docker'],
 ) as dag:
@@ -222,24 +326,29 @@ with DAG(
         python_callable=run_pure_crawler,
         provide_context=True,
     )
-
-    # [Task 2]: Spark 컨테이너 원격 실행 태스크 (도커 exec로 spark-container 내부 호출)
-    # [Task 2]: 워크스페이스 내 etl_job.py를 실행하며 오늘 날짜 인자 전달
-    # spark_transform_task = BashOperator(
-    #     task_id='spark_remote_transform_task',
-    #     bash_command='docker exec spark-container spark-submit --master local[*] /home/jovyan/work/etl_job.py $(date +%Y%m%d)',
-    # )
-    spark_transform_task = BashOperator(
-    task_id="spark_remote_transform_task",
-    bash_command=(
-        'docker exec spark-container '
-        'spark-submit '
-        '--master local[*] '
-        '--packages com.mysql:mysql-connector-j:8.3.0 '
-        '/home/jovyan/work/workspace/etl_job.py '
-        '{{ ds_nodash }}'
-    ),
+    
+    crawl_success_task = PythonOperator(
+    task_id="crawl_success_alert",
+    python_callable=crawl_success_message,
+    provide_context=True,
+)
+    spark_success_task = PythonOperator(
+    task_id="spark_success_alert",
+    python_callable=spark_success_message
 )
 
+    # [Task 2]: Spark 컨테이너 원격 실행 태스크
+    spark_transform_task = BashOperator(
+        task_id="spark_remote_transform_task",
+        bash_command=(
+            'docker exec spark-container '
+            'spark-submit '
+            '--master local[*] '
+            '--packages com.mysql:mysql-connector-j:8.3.0 '
+            '/home/jovyan/work/workspace/etl_job.py '
+            '{{ ds_nodash }}'
+        ),
+    )
+
     # 순서 제어
-    crawl_task >> spark_transform_task
+    crawl_task >> crawl_success_task >> spark_transform_task >> spark_success_task
