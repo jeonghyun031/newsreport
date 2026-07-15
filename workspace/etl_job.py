@@ -142,10 +142,9 @@ try:
     print(f"\n🔄 AWS MySQL ({db_name}.news_articles)에 테이블 생성 및 데이터 로드 중...")
     
     # MySQL의 본문 텍스트 데이터 보존 및 URL 데이터 공간 할당
-    column_types = "date TIMESTAMP, title VARCHAR(500), press VARCHAR(200), content LONGTEXT, category VARCHAR(50), url VARCHAR(1000)"
+    column_types = "date TIMESTAMP, title VARCHAR(500), press VARCHAR(200), content TEXT, category VARCHAR(50), url VARCHAR(1000)"
     
     final_df.write \
-        .option("createTableColumnTypes", column_types) \
         .jdbc(url=jdbc_url, table="news_articles", mode="overwrite", properties=db_properties)
         
     print("🎉 AWS MySQL에 'news_articles' 테이블 생성 및 데이터 저장 성공!")

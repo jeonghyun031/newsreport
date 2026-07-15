@@ -8,11 +8,12 @@ services:
       - "4045:4040"   # Spark Web UI 포트
     volumes:
       - .:/home/jovyan/work
+      - ./shared:/opt/shared
     environment:
       - JUPYTER_ENABLE_LAB=yes
       - JUPYTER_TOKEN=spark123
-      - SPARK_OPTS=--packages com.mysql:mysql-connector-j:8.3.0
     restart: always
+
 
   # 셀레니움을 완벽하게 돌려줄 크롬 전용 독채 컨테이너
   selenium-chrome:
@@ -99,6 +100,7 @@ services:
       - ./airflow_project/logs:/opt/airflow/logs
       - ./shared:/opt/shared
       - ./spark-defaults.conf:/opt/spark/conf/spark-defaults.conf
+      - /var/run/docker.sock:/var/run/docker.sock
 
   # =====================================================
   # Webserver
@@ -127,6 +129,7 @@ services:
       - ./airflow_project/logs:/opt/airflow/logs
       - ./shared:/opt/shared
       - ./spark-defaults.conf:/opt/spark/conf/spark-defaults.conf
+      - /var/run/docker.sock:/var/run/docker.sock
 
 volumes:
   airflow_postgres:

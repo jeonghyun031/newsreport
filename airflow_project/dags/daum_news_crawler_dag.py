@@ -3,6 +3,7 @@ import re
 import time
 from datetime import datetime, timedelta
 import pandas as pd
+from datetime import datetime, timedelta, timezone
 
 # Airflow 관련 오퍼레이터
 from airflow import DAG
@@ -21,13 +22,14 @@ from bs4 import BeautifulSoup
 SHARED_VOLUME_DIR = "/opt/shared"  # 도커 컴포즈에서 마운트한 공유 폴더 경로
 SHARED_RAW_DIR = os.path.join(SHARED_VOLUME_DIR, "raw")
 # ==============================================================================
-
+# 한국 표준시(KST) 타임존 정의 (UTC + 9시간)
+KST_TIMEZONE = timezone(timedelta(hours=9))
 
 def convert_relative_time(date_text):
     """
     상대 시간을 현재 시각 기준으로 'YYYY.MM.DD HH:MM' 형태로 변환합니다.
     """
-    now = datetime.now()
+    now = datetime.now(KST_TIMEZONE)
     date_text = date_text.strip()
     
     if '분 전' in date_text:
@@ -47,7 +49,7 @@ def convert_relative_time(date_text):
         return date_text
 
 
-def run_pure_crawler():
+def run_pure_crawler(**context):
     """
     지휘관(Airflow) 컨테이너에서 원격 셀레니움을 통해 크롤링을 수행하고, 
     주소(URL) 정보를 포함하여 공유 볼륨의 'raw' 폴더에 CSV를 적재하는 단계입니다.
@@ -68,7 +70,13 @@ def run_pure_crawler():
     news_list = []
     
     try:
-        news_date = datetime.now().strftime("%Y%m%d")
+        # Airflow의 논리적 실행 시간(UTC)을 가져와 KST로 변환합니다.
+        utc_logical_date = context['logical_date']
+        # Airflow의 데이터 타임객체(pendulum)를 이용해 타임존을 한국으로 변경
+        import pendulum
+        kst_logical_date = utc_logical_date.in_timezone(pendulum.timezone("Asia/Seoul"))
+        news_date = kst_logical_date.strftime("%Y%m%d")
+        
         base_url = "https://sports.daum.net/baseball/news/breaking"
         target_url = base_url
 
@@ -194,7 +202,7 @@ def run_pure_crawler():
 default_args = {
     'owner': 'COMSW',
     'depends_on_past': False,
-    'start_date': datetime(2026, 1, 1),
+    'start_date': datetime(2026, 7, 15),
     'retries': 1,
     'retry_delay': timedelta(minutes=5),
 }
@@ -203,7 +211,7 @@ with DAG(
     'daum_baseball_distributed_pipeline',
     default_args=default_args,
     description='Daum 야구 뉴스 크롤링 후 분산 Spark 컨테이너 전처리 파이프라인',
-    schedule_interval='0 9 * * *',
+    schedule_interval='0 0 * * *', # 한국 시간 기준 매일 오전 9시 실행
     catchup=False,
     tags=['crawling', 'spark', 'docker'],
 ) as dag:
@@ -212,14 +220,26 @@ with DAG(
     crawl_task = PythonOperator(
         task_id='run_pure_crawler_task',
         python_callable=run_pure_crawler,
+        provide_context=True,
     )
 
     # [Task 2]: Spark 컨테이너 원격 실행 태스크 (도커 exec로 spark-container 내부 호출)
     # [Task 2]: 워크스페이스 내 etl_job.py를 실행하며 오늘 날짜 인자 전달
+    # spark_transform_task = BashOperator(
+    #     task_id='spark_remote_transform_task',
+    #     bash_command='docker exec spark-container spark-submit --master local[*] /home/jovyan/work/etl_job.py $(date +%Y%m%d)',
+    # )
     spark_transform_task = BashOperator(
-        task_id='spark_remote_transform_task',
-        bash_command='docker exec spark-container spark-submit --master local[*] /home/jovyan/work/etl_job.py $(date +%Y%m%d)',
-    )
+    task_id="spark_remote_transform_task",
+    bash_command=(
+        'docker exec spark-container '
+        'spark-submit '
+        '--master local[*] '
+        '--packages com.mysql:mysql-connector-j:8.3.0 '
+        '/home/jovyan/work/workspace/etl_job.py '
+        '{{ ds_nodash }}'
+    ),
+)
 
     # 순서 제어
     crawl_task >> spark_transform_task
