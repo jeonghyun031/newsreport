@@ -4,8 +4,11 @@ __pycache__/
 *.pyc
 .DS_Store
 
-# airflow logs, db 공유 무시
-airflow_project/logs/
-airflow.db
-shared/
-shared/raw/
+# 민감 정보 - Git에 올리지 않음
+.env
+
+# 딥러닝 모델 및 벡터 캐시 (용량 큼)
+*.pt
+*.pth
+*.pkl
+models/

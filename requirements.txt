@@ -1,0 +1,32 @@
+# KBO 사주풀이 딥러닝 프로젝트 패키지 목록
+# ------------------------------------------------
+# [공통 필수] - 현재 랩탑 + GPU PC 모두
+pymysql
+python-dotenv
+requests
+openai
+fastapi
+uvicorn[standard]
+streamlit
+pandas
+sqlalchemy
+beautifulsoup4
+lxml
+
+# [KBO 크롤러] - 현재 랩탑에서 실행
+playwright
+
+# [Phase 1: 뉴스 감성 분석] - GPU PC 권장 (CPU도 가능)
+transformers
+torch
+sentencepiece
+
+# [Phase 3: RAG 지식베이스] - GPU PC 권장 (CPU도 가능)
+sentence-transformers
+
+# [Phase 2: 딥러닝 학습] - GPU PC 필수
+pytorch-tabnet
+scikit-learn
+numpy
+matplotlib
+tqdm
