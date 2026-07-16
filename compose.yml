@@ -143,13 +143,15 @@ services:
   # =====================================================
   backend:
     build:
-      context: ./backend
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: ./backend/Dockerfile
     container_name: kbo-backend
     ports:
       - "8000:8000"
     volumes:
       - ./backend:/app
+      - ./saju.py:/app/saju.py
+      - ./deep_learning:/app/deep_learning
     restart: always
 
   # =====================================================

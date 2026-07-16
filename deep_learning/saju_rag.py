@@ -14,7 +14,7 @@ deep_learning/saju_rag.py
   3. query_rag(query, top_k)  → 관련 명리학 지식 검색 → LLM 프롬프트용 텍스트 반환
 
 [저장 DB]
-  articel_db.saju_knowledge (embedding JSON, ~384 float per row)
+  total_db.saju_knowledge (embedding JSON, ~384 float per row)
 """
 
 import os
@@ -67,7 +67,7 @@ def _get_conn():
         port=int(os.getenv("DB_PORT", "3306")),
         user=os.getenv("DB_USER", "admin"),
         password=os.getenv("DB_PASSWORD", "12341234"),
-        database=os.getenv("DB_NAME", "articel_db"),
+        database=os.getenv("DB_NAME", "total_db"),
         charset="utf8mb4",
         cursorclass=pymysql.cursors.DictCursor,
         connect_timeout=5,

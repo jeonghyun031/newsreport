@@ -91,7 +91,7 @@ def get_db_connection():
         port=int(os.getenv("DB_PORT", "3306")),
         user=os.getenv("DB_USER", "admin"),
         password=os.getenv("DB_PASSWORD", "12341234"),
-        database=os.getenv("DB_NAME", "articel_db"),
+        database=os.getenv("DB_NAME", "total_db"),
         charset='utf8mb4',
         cursorclass=pymysql.cursors.DictCursor
     )

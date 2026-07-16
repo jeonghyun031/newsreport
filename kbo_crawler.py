@@ -6,7 +6,7 @@ KBO 공식 홈페이지 역대 투수·타자 스탯 크롤러 (2019 ~ 현재)
 [실행 흐름]
   1. Playwright로 KBO 홈페이지 접속
   2. 연도별(2019~현재) 투수/타자 스탯 수집 (모든 페이지)
-  3. AWS MySQL(articel_db)에 저장
+  3. AWS MySQL(total_db)에 저장
   4. 학습 준비 완료 → training_jobs 테이블에 READY 등록 후 종료
       ※ 실제 딥러닝 학습은 GPU PC에서 python deep_learning/saju_train_gpu.py 실행
 

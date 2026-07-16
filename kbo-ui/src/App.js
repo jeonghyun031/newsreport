@@ -430,7 +430,7 @@ function App() {
                 <div className="space-y-3 text-xs">
                   <div className="flex justify-between">
                     <span className="text-slate-400">Target Database:</span>
-                    <span className="font-semibold text-slate-700 bg-slate-100 px-2 py-0.5 rounded">articel_db</span>
+                    <span className="font-semibold text-slate-700 bg-slate-100 px-2 py-0.5 rounded">total_db</span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-slate-400">Table Name:</span>
