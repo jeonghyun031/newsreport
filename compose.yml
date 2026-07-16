@@ -1,0 +1,145 @@
+
+services:
+  spark-jupyter:
+    image: jupyter/pyspark-notebook:latest
+    container_name: spark-container
+    ports:
+      - "8889:8888"   # Jupyter Lab 웹 포트 (접속: http://localhost:8889)
+      - "4045:4040"   # Spark Web UI 포트
+    volumes:
+      - .:/home/jovyan/work
+      - ./shared:/opt/shared
+    environment:
+      - JUPYTER_ENABLE_LAB=yes
+      - JUPYTER_TOKEN=spark123
+    restart: always
+
+
+  # 셀레니움을 완벽하게 돌려줄 크롬 전용 독채 컨테이너
+  selenium-chrome:
+    image: selenium/standalone-chrome:latest
+    container_name: selenium-chrome
+    ports:
+      - "4444:4444"
+    shm_size: 2g
+    restart: always
+  # =====================================================
+  # PostgreSQL (Airflow Metadata DB)
+  # =====================================================
+  postgres:
+    image: postgres:15
+    container_name: airflow-postgres
+    restart: always
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U airflow"]
+      interval: 5s
+      retries: 5
+      timeout: 5s
+    ports:
+      - "5432:5432"
+    volumes:
+      - airflow_postgres:/var/lib/postgresql/data
+
+  # =====================================================
+  # Airflow Init
+  # =====================================================
+  airflow-init:
+    build: .
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      AIRFLOW__CORE__EXECUTOR: SequentialExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres:5432/airflow
+      AIRFLOW__CORE__LOAD_EXAMPLES: "False"
+
+    command: >
+      bash -c "
+      airflow db migrate &&
+      airflow users create
+      --username admin
+      --firstname Admin
+      --lastname User
+      --role Admin
+      --email admin@example.com
+      --password admin || true
+      "
+
+    volumes:
+      - ./airflow_project/dags:/opt/airflow/dags
+      - ./airflow_project/logs:/opt/airflow/logs
+      - ./shared:/opt/shared
+      - ./spark-defaults.conf:/opt/spark/conf/spark-defaults.conf
+
+  # =====================================================
+  # Scheduler
+  # =====================================================
+  airflow-scheduler:
+    build: .
+    restart: always
+    depends_on:
+      postgres:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+
+    environment:
+      AIRFLOW__CORE__EXECUTOR: SequentialExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres:5432/airflow
+      AIRFLOW__CORE__LOAD_EXAMPLES: "False"
+      _PIP_ADDITIONAL_REQUIREMENTS: ${_PIP_ADDITIONAL_REQUIREMENTS:-fastapi requests}
+
+    env_file:
+      - .env
+      
+    command: airflow scheduler
+
+    volumes:
+      - ./airflow_project/dags:/opt/airflow/dags
+      - ./airflow_project/logs:/opt/airflow/logs
+      - ./shared:/opt/shared
+      - ./spark-defaults.conf:/opt/spark/conf/spark-defaults.conf
+      - /var/run/docker.sock:/var/run/docker.sock
+
+  # =====================================================
+  # Webserver
+  # =====================================================
+  airflow-webserver:
+    build: .
+    restart: always
+    depends_on:
+      postgres:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+
+    environment:
+      AIRFLOW__CORE__EXECUTOR: SequentialExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres:5432/airflow
+      AIRFLOW__CORE__LOAD_EXAMPLES: "False"
+      
+    env_file:
+      - .env
+
+    ports:
+      - "8080:8080"
+
+    command: airflow webserver
+
+    volumes:
+      - ./airflow_project/dags:/opt/airflow/dags
+      - ./airflow_project/logs:/opt/airflow/logs
+      - ./shared:/opt/shared
+      - ./spark-defaults.conf:/opt/spark/conf/spark-defaults.conf
+      - /var/run/docker.sock:/var/run/docker.sock
+
+volumes:
+  airflow_postgres:
+
+
+# Admin ->Variables -> + -> Key : SLACK_WEBHOOK_URL, value : 웹훅 URL airflow에서 저장
