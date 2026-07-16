@@ -15,7 +15,6 @@ from airflow.exceptions import AirflowException
 # 셀레니움 & 뷰티풀수프
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.common.by import By
 from bs4 import BeautifulSoup
 
 # ==============================================================================
@@ -72,7 +71,6 @@ def run_pure_crawler(**context):
         kst_logical_date = utc_logical_date.in_timezone(pendulum.timezone("Asia/Seoul"))
         news_date = kst_logical_date.strftime("%Y%m%d")
         
-        # 🌟 수집 대상을 속보(breaking) 페이지로 명확히 수정했습니다.
         target_url = "https://sports.daum.net/baseball/news/breaking"
         driver.get(target_url)
         time.sleep(2) 
@@ -194,7 +192,7 @@ def run_pure_crawler(**context):
 
 
 def run_baseball_ranking_crawler(**context):
-    """[야구 - 랭킹] 인기 랭킹 뉴스 크롤러 (KBO 리그)"""
+    """[야구 - 랭킹] 인기 랭킹 뉴스 크롤러 (로컬 소스코드 기반 마이그레이션)"""
     print("원격 셀레니움 컨테이너에 브라우저 실행을 요청합니다 (랭킹)...")
     driver = get_remote_driver()
     news_list = []
@@ -205,7 +203,15 @@ def run_baseball_ranking_crawler(**context):
         kst_logical_date = utc_logical_date.in_timezone(pendulum.timezone("Asia/Seoul"))
         news_date = kst_logical_date.strftime("%Y%m%d")
         
-        target_url = f"https://sports.daum.net/kbo/news/ranking?date={news_date}"
+        # 🌟 로컬 스크립트 기반 URL 결정 흐름 적용
+        base_url = "https://sports.daum.net/baseball/news/ranking" # 야구 도메인
+        if not news_date.strip():
+            target_url = base_url
+            print(f"날짜가 지정되지 않아 기본 랭킹 페이지로 이동합니다: {target_url}")
+        else:
+            target_url = f"{base_url}?date={news_date}"
+            print(f"지정된 날짜({news_date}) 랭킹 페이지로 이동합니다: {target_url}")
+            
         driver.get(target_url)
         time.sleep(2)
         
@@ -238,39 +244,48 @@ def run_baseball_ranking_crawler(**context):
                     if len(txt_infos) >= 2:
                         raw_date, script = txt_infos[0].text.strip(), txt_infos[1].text.strip()
                         
-                    if not any(k in raw_date for k in ['.', ':', '전']) and any(k in script for k in ['.', ':', '전']):
+                    # 로컬에 있던 스왑(Swap) 예외 처리 로직 반영
+                    if '전' in script or any(chr.isdigit() for chr in script) and not ('전' in raw_date or any(chr.isdigit() for chr in raw_date)):
                         raw_date, script = script, raw_date
                         
                     rk_date = convert_relative_time(raw_date)
                     rank = rank_el.text.strip() if rank_el else str(idx + 1)
                     
                     news_list.append({
-                        "rank": rank, "date": rk_date, "title": title, "media": script,
-                        "content": " ".join(doct.split()), "url": news_url, "type": "ranking"
+                        "rank": rank, 
+                        "date": rk_date, 
+                        "title": title, 
+                        "media": script,
+                        "content": " ".join(doct.split()), 
+                        "url": news_url, 
+                        "type": "ranking"
                     })
                 except Exception as e:
+                    print(f"랭킹 아이템 파싱 실패 (스킵): {e}")
                     continue
 
         df = pd.DataFrame(news_list)
-        if not df.empty:
-            if not os.path.exists(SHARED_RAW_DIR): 
-                os.makedirs(SHARED_RAW_DIR)
-            save_path = os.path.join(SHARED_RAW_DIR, f"raw_baseball_ranking_{news_date}.csv")
-            df.to_csv(save_path, index=False, encoding="utf-8-sig")
-            len_df = len(df)
+        
+        if df.empty:
+            df = pd.DataFrame(columns=["rank", "date", "title", "media", "content", "url", "type"])
+            print("⚠️ 수집된 랭킹 데이터가 없어 빈 스키마 구조로 세팅합니다.")
             
-            # 🌟 랭킹 뉴스 수집량도 XCom에 보관하도록 추가
-            context["ti"].xcom_push(key="crawl_count", value=len_df)
-            print(f"[야구 랭킹 완료] 저장 성공 -> {save_path} ({len_df}건)")
-        else:
-            context["ti"].xcom_push(key="crawl_count", value=0)
-            print("수집된 랭킹 데이터가 없습니다.")
+        if not os.path.exists(SHARED_RAW_DIR): 
+            os.makedirs(SHARED_RAW_DIR)
+            
+        save_path = os.path.join(SHARED_RAW_DIR, f"raw_baseball_ranking_{news_date}.csv")
+        df.to_csv(save_path, index=False, encoding="utf-8-sig")
+        len_df = len(news_list)
+        
+        context["ti"].xcom_push(key="crawl_count", value=len_df)
+        print(f"[야구 랭킹 완료] 저장 성공 -> {save_path} ({len_df}건 완료)")
             
     except Exception as e:
         print(f"랭킹 크롤링 진행 중 에러 발생: {e}")
         raise e
     finally:
         driver.quit()
+        print("Chrome 브라우저(랭킹)를 안전하게 종료했습니다.")
 
 
 def slack_success_alert(message):
@@ -286,7 +301,6 @@ def slack_success_alert(message):
     )
     
 def crawl_success_message(**context):
-    # 🌟 두 태스크의 XCom 값을 각각 가져와서 통합 집계합니다.
     breaking_count = context["ti"].xcom_pull(
         task_ids="run_pure_crawler_task",
         key="crawl_count"
@@ -344,7 +358,6 @@ def on_failure_alert(context):
         print(f"❌ Slack 알림 전송 실패: {e}")
 
 def spark_success_message():
-    # 🌟 원하지 않는 앞쪽 공백(Indent) 현상 제거
     message = (
         "✅ *Spark ETL 완료*\n\n"
         "• *DAG* : `daum_baseball_crawling_spark_pipeline`\n"
@@ -412,6 +425,4 @@ with DAG(
     )
 
     # [수집 흐름 제어]
-    # 병렬로 동작하는 두 수집 task([crawl_task, crawl_ranking])가 모두 정상 완료되어야 
-    # crawl_success_task 단계로 넘어가 총합 알림을 보내고 Spark 작업을 시작합니다.
     [crawl_task, crawl_ranking] >> crawl_success_task >> spark_transform_task >> spark_success_task
