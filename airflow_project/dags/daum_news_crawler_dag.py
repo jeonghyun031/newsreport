@@ -379,7 +379,7 @@ with DAG(
     'daum_baseball_crawling_spark_pipeline',
     default_args=default_args,
     description='Daum 야구 뉴스 크롤링 후 분산 Spark 컨테이너 전처리 파이프라인',
-    schedule_interval='0 * * * *', # 한국 시간 기준 매시간 정각 실행
+    schedule_interval='30 7 * * *', # UTC 기준 : 한국 시간 +9시간 (즉, 매일 16:30 KST)
     catchup=False,
     tags=['crawling', 'spark', 'docker'],
 ) as dag:
