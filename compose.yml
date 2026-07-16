@@ -138,6 +138,37 @@ services:
       - ./spark-defaults.conf:/opt/spark/conf/spark-defaults.conf
       - /var/run/docker.sock:/var/run/docker.sock
 
+  # =====================================================
+  # backend (FastAPI)
+  # =====================================================
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: kbo-backend
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
+    restart: always
+
+  # =====================================================
+  # frontend (React UI)
+  # =====================================================
+  frontend:
+    build:
+      context: ./kbo-ui
+      dockerfile: Dockerfile
+    container_name: kbo-frontend
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./kbo-ui:/app
+      - /app/node_modules  # 로컬 node_modules가 컨테이너를 덮어쓰지 않도록 격리
+    depends_on:
+      - backend
+    restart: always
+
 volumes:
   airflow_postgres:
 
