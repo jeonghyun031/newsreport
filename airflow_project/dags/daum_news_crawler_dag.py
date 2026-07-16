@@ -4,7 +4,7 @@ import re
 import time
 from datetime import datetime, timedelta, timezone
 import pandas as pd
-import requests  # 🌟 fastapi 대신 일반 requests로 수정
+import requests
 
 # Airflow 관련 오퍼레이터
 from airflow import DAG
@@ -19,18 +19,14 @@ from selenium.webdriver.common.by import By
 from bs4 import BeautifulSoup
 
 # ==============================================================================
-# [중요 설정] 두 컨테이너가 공유하는 도커 볼륨 내부의 절대 경로를 정의합니다.
+# [설정] 공유 볼륨 및 타임존 정의
 # ==============================================================================
-SHARED_VOLUME_DIR = "/opt/shared"  # 도커 컴포즈에서 마운트한 공유 폴더 경로
+SHARED_VOLUME_DIR = "/opt/shared"
 SHARED_RAW_DIR = os.path.join(SHARED_VOLUME_DIR, "raw")
-# ==============================================================================
-# 한국 표준시(KST) 타임존 정의 (UTC + 9시간)
 KST_TIMEZONE = timezone(timedelta(hours=9))
 
 def convert_relative_time(date_text):
-    """
-    상대 시간을 현재 시각 기준으로 'YYYY.MM.DD HH:MM' 형태로 변환합니다.
-    """
+    """상대 시간을 현재 시각 기준으로 'YYYY.MM.DD HH:MM' 형태로 변환합니다."""
     now = datetime.now(KST_TIMEZONE)
     date_text = date_text.strip()
     
@@ -38,25 +34,18 @@ def convert_relative_time(date_text):
         minutes = int(re.findall(r'\d+', date_text)[0])
         converted_time = now - timedelta(minutes=minutes)
         return converted_time.strftime("%Y.%m.%d %H:%M")
-        
     elif '시간 전' in date_text:
         hours = int(re.findall(r'\d+', date_text)[0])
         converted_time = now - timedelta(hours=hours)
         return converted_time.strftime("%Y.%m.%d %H:%M")
-        
     elif '방금' in date_text or '초 전' in date_text:
         return now.strftime("%Y.%m.%d %H:%M")
-        
     else:
         return date_text
 
 
-def run_pure_crawler(**context):
-    """
-    지휘관(Airflow) 컨테이너에서 원격 셀레니움을 통해 크롤링을 수행하고, 
-    주소(URL) 정보를 포함하여 공유 볼륨의 'raw' 폴더에 CSV를 적재하는 단계입니다.
-    """
-    # raise Exception("Slack 알림 테스트") 실패 알람 테스트용
+def get_remote_driver():
+    """공통 원격 셀레니움 드라이버 생성 함수"""
     chrome_options = Options()
     chrome_options.add_argument('--headless') 
     chrome_options.add_argument('--no-sandbox') 
@@ -65,28 +54,30 @@ def run_pure_crawler(**context):
     chrome_options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
     chrome_options.add_argument("--blink-settings=imagesEnabled=false") 
     
-    print("원격 셀레니움 컨테이너에 브라우저 실행을 요청합니다...")
-    driver = webdriver.Remote(
+    return webdriver.Remote(
         command_executor='http://selenium-chrome:4444/wd/hub',
         options=chrome_options
     )
+
+
+def run_pure_crawler(**context):
+    """[야구 - 속보] 최신 뉴스 크롤러 (더보기 루프 포함)"""
+    print("원격 셀레니움 컨테이너에 브라우저 실행을 요청합니다...")
+    driver = get_remote_driver()
     news_list = []
     
     try:
-        # Airflow의 논리적 실행 시간(UTC)을 가져와 KST로 변환합니다.
-        utc_logical_date = context['logical_date']
-        # Airflow의 데이터 타임객체(pendulum)를 이용해 타임존을 한국으로 변경
         import pendulum
+        utc_logical_date = context['logical_date']
         kst_logical_date = utc_logical_date.in_timezone(pendulum.timezone("Asia/Seoul"))
         news_date = kst_logical_date.strftime("%Y%m%d")
         
-        base_url = "https://sports.daum.net/baseball/news/breaking"
-        target_url = base_url
-
+        # 🌟 수집 대상을 속보(breaking) 페이지로 명확히 수정했습니다.
+        target_url = "https://sports.daum.net/baseball/news/breaking"
         driver.get(target_url)
         time.sleep(2) 
         
-        # --- 더보기 버튼 클릭 루프 ---
+        # --- 더보기 클릭 루프 ---
         click_count = 0
         last_news_count = 0 
 
@@ -113,10 +104,10 @@ def run_pure_crawler(**context):
                     break
                     
             except Exception:
-                print(f"더보기 클릭 종료 또는 모든 기사 로드 완료")
+                print("더보기 클릭 종료 또는 모든 기사 로드 완료")
                 break
 
-        # --- 최종 HTML 파싱 (BeautifulSoup 기반) ---
+        # --- 파싱 ---
         soup = BeautifulSoup(driver.page_source, 'html.parser')
         ul_element = soup.select_one(".list_news")
         if not ul_element:
@@ -126,7 +117,6 @@ def run_pure_crawler(**context):
         lis = ul_element.select("li")
         print(f"총 수집 대상 뉴스 기사 수: {len(lis)}개")
 
-        # --- 크롤링 루프 시작 ---
         for idx, li in enumerate(lis):
             try:
                 title_el = li.select_one(".link_txt")
@@ -136,14 +126,13 @@ def run_pure_crawler(**context):
                 if not title_el:
                     continue
                     
-                for screen_out_tag in info_el.select(".screen_out"):
+                for screen_out_tag in info_el.select(".screen_out") if info_el else []:
                     screen_out_tag.decompose()
                                     
                 title = title_el.text.strip()
                 doct = doct_el.text.strip() if doct_el else ""
                 
-                # 기사 URL 추출 로직 반영
-                news_url = title_el.get("href", "").strip() if title_el else ""
+                news_url = title_el.get("href", "").strip()
                 if not news_url and doct_el:
                     news_url = doct_el.get("href", "").strip()
                 if news_url and not news_url.startswith("http"):
@@ -178,73 +167,148 @@ def run_pure_crawler(**context):
                 print(f"{idx+1}번째 뉴스 데이터 추출 중 오류 발생 (스킵): {e}")
                 continue
 
-        # DataFrame 생성 및 공유 볼륨에 원본 저장
         df = pd.DataFrame(news_list)
         if not df.empty:
             df = df[["date", "title", "media", "content", "url"]]
-
             filename = f"raw_news_{news_date}.csv"
+            
             if not os.path.exists(SHARED_RAW_DIR):
                 os.makedirs(SHARED_RAW_DIR)
             save_path = os.path.join(SHARED_RAW_DIR, filename)
             
             df.to_csv(save_path, index=False, header=True, encoding="utf-8-sig")
             len_df = len(df)
-            if len_df <= 0:
-                raise AirflowException("수집된 데이터가 없습니다.")
             
-            context["ti"].xcom_push(
-                key="crawl_count",
-                value=len_df
-)
-            print(f"\n[1단계 완료] 공유 볼륨 원본 저장 성공! -> {save_path} (총 {len_df}건)")
+            context["ti"].xcom_push(key="crawl_count", value=len_df)
+            print(f"\n[속보 완료] 공유 볼륨 원본 저장 성공! -> {save_path} (총 {len_df}건)")
         else:
-            print("수집된 데이터가 없습니다.")
+            context["ti"].xcom_push(key="crawl_count", value=0)
+            print("수집된 속보 데이터가 없습니다.")
 
     except Exception as e:
-        print(f"크롤링 진행 중 치명적 에러 발생: {e}")
+        print(f"속보 크롤링 진행 중 치명적 에러 발생: {e}")
         raise e
     finally:
         driver.quit()
         print("Chrome 브라우저를 안전하게 종료했습니다.")
 
-def slack_success_alert(message):
 
-    webhook_url = os.getenv(
-        "SLACK_WEBHOOK_URL"
-    )
+def run_baseball_ranking_crawler(**context):
+    """[야구 - 랭킹] 인기 랭킹 뉴스 크롤러 (KBO 리그)"""
+    print("원격 셀레니움 컨테이너에 브라우저 실행을 요청합니다 (랭킹)...")
+    driver = get_remote_driver()
+    news_list = []
+    
+    try:
+        import pendulum
+        utc_logical_date = context['logical_date']
+        kst_logical_date = utc_logical_date.in_timezone(pendulum.timezone("Asia/Seoul"))
+        news_date = kst_logical_date.strftime("%Y%m%d")
+        
+        target_url = f"https://sports.daum.net/kbo/news/ranking?date={news_date}"
+        driver.get(target_url)
+        time.sleep(2)
+        
+        soup = BeautifulSoup(driver.page_source, 'html.parser')
+        ul_element = soup.select_one(".list_news")
+        
+        if ul_element:
+            for idx, li in enumerate(ul_element.select("li")):
+                try:
+                    title_el = li.select_one(".link_txt")
+                    doct_el = li.select_one(".link_desc")
+                    info_el = li.select_one(".info_news")
+                    rank_el = li.select_one(".num_rank")
+                    if not title_el: continue
+                    
+                    for tag in info_el.select(".screen_out") if info_el else []:
+                        tag.decompose()
+                        
+                    title = title_el.text.strip()
+                    if len(title) > 40: 
+                        title = title[:40] + "..."
+                    
+                    doct = doct_el.text.strip() if doct_el else ""
+                    news_url = title_el.get("href", "").strip()
+                    if news_url and not news_url.startswith("http"):
+                        news_url = "https://sports.daum.net" + news_url
+                        
+                    txt_infos = info_el.select(".txt_info") if info_el else []
+                    raw_date, script = "방금 전", "알 수 없음"
+                    if len(txt_infos) >= 2:
+                        raw_date, script = txt_infos[0].text.strip(), txt_infos[1].text.strip()
+                        
+                    if not any(k in raw_date for k in ['.', ':', '전']) and any(k in script for k in ['.', ':', '전']):
+                        raw_date, script = script, raw_date
+                        
+                    rk_date = convert_relative_time(raw_date)
+                    rank = rank_el.text.strip() if rank_el else str(idx + 1)
+                    
+                    news_list.append({
+                        "rank": rank, "date": rk_date, "title": title, "media": script,
+                        "content": " ".join(doct.split()), "url": news_url, "type": "ranking"
+                    })
+                except Exception as e:
+                    continue
+
+        df = pd.DataFrame(news_list)
+        if not df.empty:
+            if not os.path.exists(SHARED_RAW_DIR): 
+                os.makedirs(SHARED_RAW_DIR)
+            save_path = os.path.join(SHARED_RAW_DIR, f"raw_baseball_ranking_{news_date}.csv")
+            df.to_csv(save_path, index=False, encoding="utf-8-sig")
+            len_df = len(df)
+            
+            # 🌟 랭킹 뉴스 수집량도 XCom에 보관하도록 추가
+            context["ti"].xcom_push(key="crawl_count", value=len_df)
+            print(f"[야구 랭킹 완료] 저장 성공 -> {save_path} ({len_df}건)")
+        else:
+            context["ti"].xcom_push(key="crawl_count", value=0)
+            print("수집된 랭킹 데이터가 없습니다.")
+            
+    except Exception as e:
+        print(f"랭킹 크롤링 진행 중 에러 발생: {e}")
+        raise e
+    finally:
+        driver.quit()
+
+
+def slack_success_alert(message):
+    webhook_url = os.getenv("SLACK_WEBHOOK_URL")
+    if not webhook_url:
+        print("⚠️ SLACK_WEBHOOK_URL 환경변수가 존재하지 않아 발송을 스킵합니다.")
+        return
 
     requests.post(
         webhook_url,
-        json={
-            "text": message
-        },
+        json={"text": message},
         timeout=10
     )
     
 def crawl_success_message(**context):
-
-    count = context["ti"].xcom_pull(
+    # 🌟 두 태스크의 XCom 값을 각각 가져와서 통합 집계합니다.
+    breaking_count = context["ti"].xcom_pull(
         task_ids="run_pure_crawler_task",
         key="crawl_count"
+    ) or 0
+
+    ranking_count = context["ti"].xcom_pull(
+        task_ids="crawl_baseball_ranking_task",
+        key="crawl_count"
+    ) or 0
+
+    total_count = breaking_count + ranking_count
+
+    message = (
+        "✅ *크롤링 완료 안내*\n\n"
+        "• *DAG* : `daum_baseball_crawling_spark_pipeline`\n"
+        f"• *수집된 야구 속보 뉴스* : `{breaking_count}건`\n"
+        f"• *수집된 KBO 랭킹 뉴스* : `{ranking_count}건`\n"
+        f"• *총합 뉴스 수집량* : `{total_count}건`"
     )
-
-    slack_success_alert(
-        f"""
-✅ 크롤링 성공
-
-DAG:
-daum_baseball_crawling_spark_pipeline
-
-수집 뉴스:
-{count}건
-"""
-    )
+    slack_success_alert(message)
     
 def on_failure_alert(context):
-    """
-    Task 실패 시 Slack으로 알림 전송
-    """
     dag_id = context["task_instance"].dag_id
     task_id = context["task_instance"].task_id
     logical_date = (
@@ -253,9 +317,7 @@ def on_failure_alert(context):
         .strftime("%Y-%m-%d %H:%M:%S")
     )
     exception = context.get("exception")
-    
     log_url = context["task_instance"].log_url
-    
 
     message = (
         "=====*Airflow 파이프라인 실패 알림*=====\n"
@@ -266,78 +328,71 @@ def on_failure_alert(context):
         f"• 로그 : {log_url}"
     )
 
-    # Airflow Variable에 저장한 Webhook URL 사용
     webhook_url = os.getenv("SLACK_WEBHOOK_URL")
-
     if not webhook_url:
         raise ValueError("SLACK_WEBHOOK_URL 환경변수가 설정되지 않았습니다.")
     
-    payload = {
-        "text": message
-    }
-
     try:
         response = requests.post(
             webhook_url,
-            json=payload,
+            json={"text": message},
             timeout=10
         )
         response.raise_for_status()
         print("✅ Slack 알림 전송 성공")
-
     except requests.exceptions.RequestException as e:
         print(f"❌ Slack 알림 전송 실패: {e}")
 
 def spark_success_message():
-    slack_success_alert(
-        f"""
-        ✅ Spark ETL 완료
-        
-        DAG:
-        daum_baseball_crawling_spark_pipeline
-
-        MySQL 적재 성공
-        """
+    # 🌟 원하지 않는 앞쪽 공백(Indent) 현상 제거
+    message = (
+        "✅ *Spark ETL 완료*\n\n"
+        "• *DAG* : `daum_baseball_crawling_spark_pipeline`\n"
+        "• *DB* : `MySQL 적재 정상 완료`"
     )
+    slack_success_alert(message)
 
-# 🌟 중복 선언되었던 default_args를 하나로 통합 및 콜백 함수 지정
+
 default_args = {
     'owner': 'COMSW',
     'depends_on_past': False,
     'start_date': datetime(2026, 7, 15),
     'retries': 0,
     'retry_delay': timedelta(minutes=5),
-    'on_failure_callback': on_failure_alert  # 태스크 실패 시 슬랙 알림 동작 활성화
+    'on_failure_callback': on_failure_alert
 }
 
-# --- Airflow DAG 스케줄 설정 ---
 with DAG(
     'daum_baseball_crawling_spark_pipeline',
     default_args=default_args,
     description='Daum 야구 뉴스 크롤링 후 분산 Spark 컨테이너 전처리 파이프라인',
-    schedule_interval='0 * * * *', # 한국 시간 기준 매시간 정각 실행 (주석은 9시라고 되어있으나 표현식은 매시간 정각입니다)
+    schedule_interval='0 * * * *', # 한국 시간 기준 매시간 정각 실행
     catchup=False,
     tags=['crawling', 'spark', 'docker'],
 ) as dag:
 
-    # [Task 1]: 크롤링 수행 태스크 (Airflow 실행)
+    # 1. 야구 속보 크롤링 (Airflow 실행)
     crawl_task = PythonOperator(
         task_id='run_pure_crawler_task',
         python_callable=run_pure_crawler,
         provide_context=True,
     )
     
+    # 2. 야구 랭킹 크롤링 (KBO 리그 인기 기사 1~20위)
+    crawl_ranking = PythonOperator(
+        task_id='crawl_baseball_ranking_task',
+        python_callable=run_baseball_ranking_crawler,
+        provide_context=True,
+    )
+    
+    # 3. 크롤링 성공 알림
     crawl_success_task = PythonOperator(
-    task_id="crawl_success_alert",
-    python_callable=crawl_success_message,
-    provide_context=True,
-)
-    spark_success_task = PythonOperator(
-    task_id="spark_success_alert",
-    python_callable=spark_success_message
-)
-
-    # [Task 2]: Spark 컨테이너 원격 실행 태스크
+        task_id="crawl_success_alert",
+        python_callable=crawl_success_message,
+        provide_context=True,
+    )
+    
+    # 4. Spark 컨테이너 원격 실행 및 처리
     spark_transform_task = BashOperator(
         task_id="spark_remote_transform_task",
         bash_command=(
@@ -350,5 +405,13 @@ with DAG(
         ),
     )
 
-    # 순서 제어
-    crawl_task >> crawl_success_task >> spark_transform_task >> spark_success_task
+    # 5. Spark 성공 알림
+    spark_success_task = PythonOperator(
+        task_id="spark_success_alert",
+        python_callable=spark_success_message
+    )
+
+    # [수집 흐름 제어]
+    # 병렬로 동작하는 두 수집 task([crawl_task, crawl_ranking])가 모두 정상 완료되어야 
+    # crawl_success_task 단계로 넘어가 총합 알림을 보내고 Spark 작업을 시작합니다.
+    [crawl_task, crawl_ranking] >> crawl_success_task >> spark_transform_task >> spark_success_task
