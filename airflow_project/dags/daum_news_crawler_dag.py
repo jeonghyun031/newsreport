@@ -174,7 +174,7 @@ def run_pure_crawler(**context):
                 os.makedirs(SHARED_RAW_DIR)
             save_path = os.path.join(SHARED_RAW_DIR, filename)
             
-            df.to_csv(save_path, index=False, header=True, encoding="utf-8-sig")
+            df.to_csv(save_path, index=False, header=False, encoding="utf-8-sig")
             len_df = len(df)
             
             context["ti"].xcom_push(key="crawl_count", value=len_df)
@@ -367,7 +367,7 @@ def spark_success_message():
 
 
 default_args = {
-    'owner': 'COMSW',
+    'owner': 'kbo_admin',
     'depends_on_past': False,
     'start_date': datetime(2026, 7, 15),
     'retries': 0,
@@ -379,8 +379,9 @@ with DAG(
     'daum_baseball_crawling_spark_pipeline',
     default_args=default_args,
     description='Daum 야구 뉴스 크롤링 후 분산 Spark 컨테이너 전처리 파이프라인',
-    schedule_interval='30 7 * * *', # UTC 기준 : 한국 시간 +9시간 (즉, 매일 16:30 KST)
+    schedule_interval='0 * * * *', # 매일 정각마다 실행 (UTC 기준)
     catchup=False,
+    is_paused_upon_creation=False,
     tags=['crawling', 'spark', 'docker'],
 ) as dag:
 
