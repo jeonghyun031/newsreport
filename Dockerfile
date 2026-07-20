@@ -13,5 +13,3 @@ RUN pip install --no-cache-dir \
     torch \
     sentencepiece \
     sentence-transformers
-
-USER airflow

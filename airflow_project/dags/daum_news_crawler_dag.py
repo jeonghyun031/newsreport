@@ -414,8 +414,7 @@ with DAG(
             'spark-submit '
             '--master local[*] '
             '--packages com.mysql:mysql-connector-j:8.3.0 '
-            '/home/jovyan/work/workspace/etl_job.py '
-            '{{ ds_nodash }}'
+            '/home/jovyan/work/workspace/etl_job.py'
         ),
     )
 

@@ -8,7 +8,8 @@ import re
 import time
 import os
 import textwrap
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+kst = timezone(timedelta(hours=9))
 import pandas as pd
 
 from selenium import webdriver
@@ -25,7 +26,7 @@ def convert_relative_time(date_text):
     '23분 전', '3시간 전', '방금 전' 등의 상대 시간을
     현재 시각 기준으로 'YYYY.MM.DD HH:MM' 형태로 변환합니다.
     """
-    now = datetime.now()
+    now = datetime.now(kst)
     date_text = date_text.strip()
     
     # 1. '분 전' 처리
@@ -148,7 +149,7 @@ def main():
             df = df[["순위", "날짜", "제목", "언론사", "내용"]]
             
             # 파일명 현재 '연월일_시분' 추가
-            current_time = datetime.now().strftime("%Y%m%d_%H%M")
+            current_time = datetime.now(kst).strftime("%Y%m%d_%H%M")
             filename = f"NewsRank_{news_date}_daum_{current_time}.csv"
             
             # Crawling 폴더 내부에 격리 저장

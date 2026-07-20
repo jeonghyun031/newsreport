@@ -5,7 +5,8 @@
 import re
 import time
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+kst = timezone(timedelta(hours=9))
 import pandas as pd
 
 from selenium import webdriver
@@ -21,7 +22,7 @@ def convert_relative_time(date_text):
     '23분 전', '3시간 전', '방금 전' 등의 상대 시간을
     현재 시각 기준으로 'YYYY.MM.DD HH:MM' 형태로 변환합니다.
     """
-    now = datetime.now()
+    now = datetime.now(kst)
     date_text = date_text.strip()
     
     if '분 전' in date_text:
@@ -64,7 +65,7 @@ def main():
         base_url = "https://sports.daum.net/baseball/news/breaking"
 
         if not news_date.strip():
-            news_date = datetime.now().strftime("%Y%m%d")
+            news_date = datetime.now(kst).strftime("%Y%m%d")
             target_url = base_url
             print(f"날짜가 지정되지 않아 기본 페이지로 이동합니다: {target_url}")
         else:
@@ -201,7 +202,7 @@ def main():
             df = df[["날짜", "제목", "언론사", "내용", "주소"]] # 오타 방지 안전장치
             df.columns = ["날짜", "제목", "언론사", "내용", "주소"] # 컬럼명 강제 통일
 
-            current_time = datetime.now().strftime("%Y%m%d_%H%M")
+            current_time = datetime.now(kst).strftime("%Y%m%d_%H%M")
             filename = f"NewsList({news_date})daum.csv"
             
             output_dir = "Crawling"

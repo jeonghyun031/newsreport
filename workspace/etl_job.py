@@ -3,7 +3,7 @@ from pyspark.sql.types import StructType, StructField, StringType, IntegerType
 from pyspark.sql.functions import col, to_timestamp, trim, when, udf
 import os
 import sys
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 
 print("🚀 Spark Session 시작 중...")
 # Spark 세션 생성 (MySQL JDBC 드라이버 추가 포함)
@@ -50,7 +50,9 @@ db_properties = {
 }
 
 # 공통 실행 일자 파라미터 획득
-target_date = sys.argv[1] if len(sys.argv) > 1 else datetime.now().strftime("%Y%m%d")
+# 한국 시간(KST) 명시적 적용
+kst = timezone(timedelta(hours=9))
+target_date = sys.argv[1] if len(sys.argv) > 1 else datetime.now(kst).strftime("%Y%m%d")
 
 # ==============================================================================
 # [Extract 1] 일반 야구 속보 뉴스 파일 경로 정의 및 로드
