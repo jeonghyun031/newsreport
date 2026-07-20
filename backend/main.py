@@ -221,19 +221,59 @@ def summarize_news(payload: SummarizeRequest):
 @app.get("/api/schedule")
 def get_schedule():
     """
-    KBO 경기 일정 데이터를 statistics_db.kbo_schedule 테이블로부터 조회하여 제공합니다.
+    KBO 경기 일정 데이터를 kbo_schedule 테이블로부터 조회하여 제공합니다.
+    (DB 실제 컬럼명 game_date, game_time, game_status 별칭 바인딩)
     """
     try:
         conn = get_db_connection()
+        result = []
         with conn.cursor() as cursor:
-            # 기본 접속 DB가 articel_db이므로, 명시적으로 statistics_db.kbo_schedule을 쿼리합니다.
-            sql = "SELECT date, time, away_team, home_team, stadium, status, away_pitcher, home_pitcher FROM kbo_schedule ORDER BY date ASC, time ASC"
-            cursor.execute(sql)
-            result = cursor.fetchall()
+            # DB 실제 컬럼명: game_date, game_time, away_team, home_team, stadium, game_status, away_pitcher, home_pitcher
+            sql_primary = """
+                SELECT 
+                    game_date AS date, 
+                    game_time AS time, 
+                    away_team, 
+                    home_team, 
+                    stadium, 
+                    game_status AS status, 
+                    away_pitcher, 
+                    home_pitcher 
+                FROM kbo_schedule 
+                ORDER BY game_date ASC, game_time ASC
+            """
+            try:
+                cursor.execute(sql_primary)
+                result = cursor.fetchall()
+            except Exception as e1:
+                print(f"⚠️ [1차 쿼리 실패, 호환 쿼리 시도]: {e1}")
+                # 혹시 date, time, status 컬럼명으로 되어 있는 기존 테이블 대비 2차 쿼리
+                sql_fallback = "SELECT date, time, away_team, home_team, stadium, status, away_pitcher, home_pitcher FROM kbo_schedule ORDER BY date ASC, time ASC"
+                cursor.execute(sql_fallback)
+                result = cursor.fetchall()
+
         conn.close()
         return result
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"경기 일정 조회 실패: {str(e)}")
+        print(f"⚠️ [/api/schedule] 경기 일정 DB 조회 예외: {e}")
+@app.get("/api/saju")
+def get_pitcher_saju(
+    pitcher: str, 
+    opponent: Optional[str] = "상대팀", 
+    stadium: Optional[str] = "야구장",
+    date: Optional[str] = None,
+    my_team: Optional[str] = None
+):
+    """
+    Qwen LLM 기반 '야잘알 도사' 투수 사주풀이 결과를 생성하여 반환합니다.
+    """
+    if not pitcher or not pitcher.strip():
+        raise HTTPException(status_code=400, detail="투수 이름을 입력해 주세요.")
+    try:
+        saju_text = get_baseball_saju(pitcher.strip(), opponent.strip(), stadium.strip(), date, my_team)
+        return {"saju": saju_text}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"사주 생성 실패: {str(e)}")
 
 class EmailBriefingRequest(BaseModel):
     email: str
@@ -295,27 +335,51 @@ def send_email_briefing(payload: EmailBriefingRequest):
     teams_str = ", ".join(payload.teams)
     print(f"\n[LOG] /api/send-email-briefing: 수신자={payload.email}, 관심구단={teams_str}")
 
-    # 1. 관심 구단별 뉴스 쿼리 (최대 10건)
+    # 1. 관심 구단별 뉴스 및 kbo_schedule 매치업/선발투수 정보 쿼리
     try:
         conn = get_db_connection()
         articles_by_team = {}
+        schedules_by_team = {}
         with conn.cursor() as cursor:
             for team in payload.teams:
+                # 1-1. 뉴스 기사 쿼리
                 resolved_query = SPORTS_ALIASES.get(team.lower(), team)
-                sql = """
+                sql_news = """
                     SELECT title, press, date, url, content
                     FROM news_articles
                     WHERE category = 'KBO' AND (title LIKE %s OR content LIKE %s)
                     ORDER BY date DESC LIMIT 4
                 """
                 pattern = f"%{resolved_query}%"
-                cursor.execute(sql, (pattern, pattern))
+                cursor.execute(sql_news, (pattern, pattern))
                 rows = cursor.fetchall()
                 if rows:
                     articles_by_team[team] = rows
+
+                # 1-2. kbo_schedule 테이블에서 매치업 및 선발투수 쿼리
+                sql_sched = """
+                    SELECT 
+                        game_date AS date, 
+                        game_time AS time, 
+                        away_team, 
+                        home_team, 
+                        stadium, 
+                        game_status AS status, 
+                        away_pitcher, 
+                        home_pitcher
+                    FROM kbo_schedule
+                    WHERE away_team LIKE %s OR home_team LIKE %s
+                    ORDER BY game_date DESC, game_time ASC LIMIT 2
+                """
+                team_pattern = f"%{team}%"
+                cursor.execute(sql_sched, (team_pattern, team_pattern))
+                sched_rows = cursor.fetchall()
+                if sched_rows:
+                    schedules_by_team[team] = sched_rows
+
         conn.close()
     except Exception as db_err:
-        raise HTTPException(status_code=500, detail=f"뉴스 조회 중 오류 발생: {str(db_err)}")
+        raise HTTPException(status_code=500, detail=f"데이터 조회 중 오류 발생: {str(db_err)}")
 
     # 2. Qwen AI 맞춤 브리핑 생성
     all_titles = []
@@ -352,21 +416,51 @@ def send_email_briefing(payload: EmailBriefingRequest):
     if not summary_text:
         summary_text = f"- **[{teams_str}]** 최근 KBO 리그 경기가 뜨겁게 펼쳐지는 가운데 팬들의 열띤 응원이 이어지고 있습니다."
 
-    # 3. 프리미엄 HTML 이메일 템플릿 제작
+    # 3. 프리미엄 HTML 이메일 템플릿 제작 (kbo_schedule 매치업 및 선발투수 포함)
     news_html_blocks = ""
-    for team, rows in articles_by_team.items():
-        news_html_blocks += f"""
-        <div style="margin-bottom: 20px;">
-            <h3 style="color: #0284c7; border-bottom: 2px solid #0284c7; padding-bottom: 4px; margin-bottom: 10px;">⚾ {team} 최신 뉴스</h3>
-            <ul style="padding-left: 20px; color: #334155; line-height: 1.6;">
-        """
-        for r in rows:
-            news_html_blocks += f"""
-                <li style="margin-bottom: 8px;">
-                    <strong>[{r.get('press', 'KBO')}]</strong> {r.get('title')}
-                </li>
+    for team in payload.teams:
+        # 경기 일정 & 선발 투수 블록
+        sched_rows = schedules_by_team.get(team, [])
+        sched_html = ""
+        if sched_rows:
+            sched_html += f"""
+            <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px; margin-bottom: 12px;">
+                <strong style="color: #0f172a; font-size: 13px;">🗓️ {team} 경기 매치업 & 선발 투수</strong>
+                <ul style="margin: 6px 0 0 0; padding-left: 18px; font-size: 13px; color: #475569;">
             """
-        news_html_blocks += "</ul></div>"
+            for s in sched_rows:
+                away_p = s.get('away_pitcher') or '선발미정'
+                home_p = s.get('home_pitcher') or '선발미정'
+                date_fmt = str(s.get('date', ''))
+                sched_html += f"""
+                    <li style="margin-bottom: 4px;">
+                        [{date_fmt}] <strong>{s.get('away_team')}</strong>({away_p}) VS <strong>{s.get('home_team')}</strong>({home_p}) @ {s.get('stadium')} ({s.get('status', '')})
+                    </li>
+                """
+            sched_html += "</ul></div>"
+
+        # 뉴스 리스트 블록
+        rows = articles_by_team.get(team, [])
+        news_list_html = ""
+        if rows:
+            news_list_html += '<ul style="padding-left: 20px; color: #334155; line-height: 1.6; margin-top: 6px;">'
+            for r in rows:
+                news_list_html += f"""
+                    <li style="margin-bottom: 8px;">
+                        <strong>[{r.get('press', 'KBO')}]</strong> {r.get('title')}
+                    </li>
+                """
+            news_list_html += '</ul>'
+        else:
+            news_list_html = '<p style="font-size: 13px; color: #94a3b8;">최신 뉴스 기사를 불러오는 중입니다.</p>'
+
+        news_html_blocks += f"""
+        <div style="margin-bottom: 24px;">
+            <h3 style="color: #0284c7; border-bottom: 2px solid #0284c7; padding-bottom: 4px; margin-bottom: 10px; font-size: 16px;">⚾ {team} 브리핑</h3>
+            {sched_html}
+            {news_list_html}
+        </div>
+        """
 
     html_template = f"""
     <!DOCTYPE html>
@@ -385,7 +479,7 @@ def send_email_briefing(payload: EmailBriefingRequest):
                         {summary_text.replace(chr(10), '<br/>')}
                     </div>
                 </div>
-                {news_html_blocks if news_html_blocks else '<p style="color: #64748b;">현재 선택하신 구단의 수집된 최신 기사가 없습니다.</p>'}
+                {news_html_blocks}
             </div>
             <div style="background: #f1f5f9; padding: 16px; text-align: center; font-size: 12px; color: #64748b; border-top: 1px solid #e2e8f0;">
                 본 메일은 KBO AI 뉴스 캐스터 서비스에서 수신 동의하신 회원님께 발송되었습니다.<br/>
@@ -397,7 +491,7 @@ def send_email_briefing(payload: EmailBriefingRequest):
     """
 
     # 4. 이메일 발송 수행
-    success, msg = send_smtp_email(payload.email, f"⚾ [KBO AI 브리핑] {teams_str} 관심 구단 데일리 뉴스", html_template)
+    success, msg = send_smtp_email(payload.email, f"⚾ [KBO AI 브리핑] {teams_str} 관심 구단 데일리 뉴스 & 선발투수 정보", html_template)
 
     return {
         "success": success,
@@ -411,6 +505,7 @@ def send_email_briefing(payload: EmailBriefingRequest):
 def subscribe_newsletter(payload: SubscribeRequest):
     """
     관심 구단 이메일 구독 정보를 MySQL(total_db.email_subscribers)에 저장합니다.
+    (CREATE TABLE DDL을 수행하지 않고 기존 테이블에 등록)
     """
     if not payload.email or "@" not in payload.email:
         raise HTTPException(status_code=400, detail="유효한 이메일 주소를 입력해 주세요.")
@@ -420,15 +515,6 @@ def subscribe_newsletter(payload: SubscribeRequest):
     try:
         conn = get_db_connection()
         with conn.cursor() as cur:
-            # 테이블 없으면 생성
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS email_subscribers (
-                    id INT AUTO_INCREMENT PRIMARY KEY,
-                    email VARCHAR(255) NOT NULL UNIQUE,
-                    teams VARCHAR(255) NOT NULL,
-                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-            """)
             teams_str = ",".join(payload.teams)
             cur.execute("""
                 INSERT INTO email_subscribers (email, teams)
@@ -439,7 +525,7 @@ def subscribe_newsletter(payload: SubscribeRequest):
         conn.close()
         return {"success": True, "message": f"'{payload.email}' 주소로 {teams_str} 구단 뉴스 구독이 등록되었습니다!"}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"구독 등록 실패: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"구독 등록 처리 실패 (테이블 확인 필요): {str(e)}")
 
 @app.post("/api/send-batch-email-briefings")
 def send_batch_email_briefings():

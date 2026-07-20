@@ -36,45 +36,64 @@ function App() {
       if (!res.ok) throw new Error('경기 일정 API 응답 실패');
       const data = await res.json();
 
-      // 당일 경기 필터링 (로컬 날짜 추출 YYYYMMDD)
+      if (!data || data.length === 0) {
+        setSchedules([]);
+        setSelectedSchedule(null);
+        setLoadingSchedules(false);
+        return;
+      }
+
+      // 날짜 정제 헬퍼 (2026.7.23 또는 2026-07-23 -> 20260723)
+      const normalizeDate = (dStr) => {
+        if (!dStr) return '';
+        const matches = String(dStr).match(/(\d{4})[^\d]*(\d{1,2})[^\d]*(\d{1,2})/);
+        if (matches) {
+          const y = matches[1];
+          const m = matches[2].padStart(2, '0');
+          const d = matches[3].padStart(2, '0');
+          return `${y}${m}${d}`;
+        }
+        return String(dStr).replace(/[^0-9]/g, '');
+      };
+
       const localToday = new Date();
       const yyyy = localToday.getFullYear();
       const mm = String(localToday.getMonth() + 1).padStart(2, '0');
       const dd = String(localToday.getDate()).padStart(2, '0');
       const todayStr = `${yyyy}${mm}${dd}`;
 
-      let filtered = data.filter(sched => sched.date === todayStr);
+      let filtered = data.filter(sched => normalizeDate(sched.date) === todayStr);
+
       if (filtered.length === 0 && data.length > 0) {
-        // 오늘 경기가 없다면, DB 내의 경기 날짜들 중 오늘과 시간상 가장 가까운(절대값 차이가 최소인) 날짜 찾기
+        // 오늘 경기가 없으면 가장 가까운 날짜 경기 찾기
         const availableDates = [...new Set(data.map(s => s.date))];
         let closestDate = availableDates[0];
         let minDiff = Infinity;
 
         availableDates.forEach(dateStr => {
-          const y = parseInt(dateStr.substring(0, 4), 10);
-          const m = parseInt(dateStr.substring(4, 6), 10) - 1;
-          const d = parseInt(dateStr.substring(6, 8), 10);
-          const targetDateObj = new Date(y, m, d);
-
-          const diff = Math.abs(localToday - targetDateObj);
-          if (diff < minDiff) {
-            minDiff = diff;
-            closestDate = dateStr;
+          const norm = normalizeDate(dateStr);
+          if (norm.length >= 8) {
+            const y = parseInt(norm.substring(0, 4), 10);
+            const m = parseInt(norm.substring(4, 6), 10) - 1;
+            const d = parseInt(norm.substring(6, 8), 10);
+            const targetDateObj = new Date(y, m, d);
+            const diff = Math.abs(localToday - targetDateObj);
+            if (diff < minDiff) {
+              minDiff = diff;
+              closestDate = dateStr;
+            }
           }
         });
 
         filtered = data.filter(sched => sched.date === closestDate);
+        if (filtered.length === 0) filtered = data.slice(0, 10);
       }
 
       setSchedules(filtered);
 
       if (filtered.length > 0) {
-        setSelectedSchedule(filtered[0]); // 첫 경기 자동 선택
-        // 양팀 선발 사주 자동 패치 기동 (실제 DB 선발 투수 컬럼 데이터 활용)
-        const awayPitcher = filtered[0].away_pitcher || '미정';
-        const homePitcher = filtered[0].home_pitcher || '미정';
-        fetchSaju(awayPitcher, filtered[0].home_team, filtered[0].stadium, false, '', filtered[0].away_team);
-        fetchSaju(homePitcher, filtered[0].away_team, filtered[0].stadium, true, '', filtered[0].home_team);
+        setSelectedSchedule(filtered[0]);
+        setSajuResult({ home: '', away: '' });
       } else {
         setSelectedSchedule(null);
       }
@@ -105,18 +124,14 @@ function App() {
       console.error(err);
       setSajuResult(prev => ({ ...prev, [type]: '도사님이 마운드 기도를 하러 가셨는지 점괘를 낼 수 없구나. 다시 흔들어보시게.' }));
     } finally {
-      setSajuResult(prev => ({ ...prev, [type]: false }));
+      setLoadingSaju(prev => ({ ...prev, [type]: false }));
     }
   };
 
-  // 경기 선택 이벤트 헬퍼
+  // 경기 선택 이벤트 헬퍼 (자동 호출 제거, 사용자가 버튼 클릭 시에만 사주 로드)
   const handleSelectSchedule = (sched) => {
     setSelectedSchedule(sched);
-    const awayPitcher = sched.away_pitcher || '미정';
-    const homePitcher = sched.home_pitcher || '미정';
-    // 양 팀 선발 투수 사주풀이 실시간 로드 (실제 DB 선발 투수 데이터 활용 및 경기 날짜 공급)
-    fetchSaju(awayPitcher, sched.home_team, sched.stadium, false, sched.date, sched.away_team);
-    fetchSaju(homePitcher, sched.away_team, sched.stadium, true, sched.date, sched.home_team);
+    setSajuResult({ home: '', away: '' });
   };
 
   // 뉴스 목록 로드 & 백그라운드 자동 요약 연동
@@ -638,7 +653,7 @@ function App() {
                         </h3>
                         <button
                           disabled={!selectedSchedule.away_pitcher || selectedSchedule.away_pitcher === '미정'}
-                          onClick={() => fetchSaju(selectedSchedule.away_pitcher, selectedSchedule.home_team, selectedSchedule.stadium, false)}
+                          onClick={() => fetchSaju(selectedSchedule.away_pitcher, selectedSchedule.home_team, selectedSchedule.stadium, false, selectedSchedule.date, selectedSchedule.away_team)}
                           className={`text-[10px] font-bold px-2.5 py-0.5 rounded transition border ${(!selectedSchedule.away_pitcher || selectedSchedule.away_pitcher === '미정') ? 'bg-slate-200 text-slate-400 border-slate-300 cursor-not-allowed' : 'text-amber-900 bg-amber-200/60 hover:bg-amber-200 border-amber-300'}`}
                         >
                           {(!selectedSchedule.away_pitcher || selectedSchedule.away_pitcher === '미정') ? '선발 미정' : '도사님께 점괘 묻기'}
@@ -670,7 +685,7 @@ function App() {
                         </h3>
                         <button
                           disabled={!selectedSchedule.home_pitcher || selectedSchedule.home_pitcher === '미정'}
-                          onClick={() => fetchSaju(selectedSchedule.home_pitcher, selectedSchedule.away_team, selectedSchedule.stadium, true)}
+                          onClick={() => fetchSaju(selectedSchedule.home_pitcher, selectedSchedule.away_team, selectedSchedule.stadium, true, selectedSchedule.date, selectedSchedule.home_team)}
                           className={`text-[10px] font-bold px-2.5 py-0.5 rounded transition border ${(!selectedSchedule.home_pitcher || selectedSchedule.home_pitcher === '미정') ? 'bg-slate-200 text-slate-400 border-slate-300 cursor-not-allowed' : 'text-amber-900 bg-amber-200/60 hover:bg-amber-200 border-amber-300'}`}
                         >
                           {(!selectedSchedule.home_pitcher || selectedSchedule.home_pitcher === '미정') ? '선발 미정' : '도사님께 점괘 묻기'}
