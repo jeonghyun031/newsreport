@@ -235,34 +235,10 @@ if final_news_df:
 # [Load 2] KBO 랭킹 뉴스 -> 🌟추후 지정 전용 영역 (현재 주석 처리)🌟
 # ==============================================================================
 if final_rank_df:
-    print("\n🚧 [랭킹 DB] 적재 대상 DB 및 타겟 테이블 미지정 상태 (추후 지정 예정)")
     print("📋 현재 정제 완료된 랭킹 데이터 스키마:")
     final_rank_df.printSchema()
     
     # --------------------------------------------------------------------------
-<<<<<<< HEAD
-    # [추후 개발용 가이드 템플릿]
-    # 아래 주석은 원하는 다른 DB 유형에 맞춰 활성화 후 정보를 수정하여 사용 가능합니다.
-    # --------------------------------------------------------------------------
-    """
-    try:
-        # 예시 1) AWS MySQL의 다른 테이블(예: kbo_rankings)에 적재할 경우
-        target_table_name = "kbo_rankings"
-        print(f"🔄 랭킹 데이터를 AWS MySQL ({db_name}.{target_table_name}) 테이블에 로드하는 중...")
-        
-        final_rank_df.write \
-            .jdbc(url=jdbc_url, table=target_table_name, mode="overwrite", properties=db_properties)
-            
-        print(f"🎉 랭킹 데이터를 {target_table_name} 테이블에 적재 완료했습니다!")
-        
-        # 예시 2) 완전히 다른 NoSQL 또는 외부 클라우드 DB에 적재를 원할 경우
-        # final_rank_df.write.format("org.apache.spark.sql.mongodb").option("database", "db_name").option("collection", "ranking").mode("append").save()
-        
-    except Exception as e:
-        print("\n❌ [랭킹 DB] 적재 실패:")
-        print(e)
-    """
-=======
     # [새로운 테이블 생성 및 적재 코드]
     # --------------------------------------------------------------------------
     # 💡 꿀팁: 테이블이 존재하지 않는다면, Spark가 자동으로 스키마를 참고하여 테이블을 새로 만듭니다.
@@ -281,7 +257,6 @@ if final_rank_df:
     except Exception as e:
         print(f"\n❌ [랭킹 DB] '{target_table_name}' 테이블 적재 실패:")
         print(e)
->>>>>>> origin/feature/airflow
 
 
 # 최종 세션 종료
