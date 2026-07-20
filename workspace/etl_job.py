@@ -240,6 +240,7 @@ if final_rank_df:
     final_rank_df.printSchema()
     
     # --------------------------------------------------------------------------
+<<<<<<< HEAD
     # [추후 개발용 가이드 템플릿]
     # 아래 주석은 원하는 다른 DB 유형에 맞춰 활성화 후 정보를 수정하여 사용 가능합니다.
     # --------------------------------------------------------------------------
@@ -261,6 +262,26 @@ if final_rank_df:
         print("\n❌ [랭킹 DB] 적재 실패:")
         print(e)
     """
+=======
+    # [새로운 테이블 생성 및 적재 코드]
+    # --------------------------------------------------------------------------
+    # 💡 꿀팁: 테이블이 존재하지 않는다면, Spark가 자동으로 스키마를 참고하여 테이블을 새로 만듭니다.
+    target_table_name = "kbo_rankings"  # 👈 여기에 새로 만들고 싶은 테이블 이름을 입력하세요!
+    
+    try:
+        print(f"🔄 랭킹 데이터를 article_db 내의 새로운 테이블 ({target_table_name})에 로드하는 중...")
+        
+        # 'overwrite'는 기존에 테이블이 혹시 있다면 덮어쓰며 새로 만들고, 
+        # 'append'는 매번 실행할 때마다 데이터를 아래에 덧붙입니다. 상황에 맞게 골라보세요!
+        final_rank_df.write \
+            .jdbc(url=jdbc_url, table=target_table_name, mode="overwrite", properties=db_properties)
+            
+        print(f"🎉 랭킹 데이터를 '{target_table_name}' 테이블에 적재 및 생성을 완료했습니다!")
+        
+    except Exception as e:
+        print(f"\n❌ [랭킹 DB] '{target_table_name}' 테이블 적재 실패:")
+        print(e)
+>>>>>>> origin/feature/airflow
 
 
 # 최종 세션 종료
