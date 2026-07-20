@@ -16,6 +16,15 @@ function App() {
   const [sajuResult, setSajuResult] = useState({ home: '', away: '' });
   const [loadingSaju, setLoadingSaju] = useState({ home: false, away: false });
 
+  // 관심 구단 뉴스 브리핑 이메일 상태 변수
+  const KBO_TEAMS = ['KIA', '삼성', 'LG', '두산', 'SSG', 'KT', '한화', '롯데', 'NC', '키움'];
+  const [selectedTeams, setSelectedTeams] = useState(['삼성', 'KIA']);
+  const [emailInput, setEmailInput] = useState('');
+  const [sendingEmail, setSendingEmail] = useState(false);
+  const [subscribing, setSubscribing] = useState(false);
+  const [emailResult, setEmailResult] = useState(null);
+  const [toastMessage, setToastMessage] = useState('');
+
   // FastAPI 백엔드 주소
   const BACKEND_URL = 'http://localhost:8000';
 
@@ -64,8 +73,8 @@ function App() {
         // 양팀 선발 사주 자동 패치 기동 (실제 DB 선발 투수 컬럼 데이터 활용)
         const awayPitcher = filtered[0].away_pitcher || '미정';
         const homePitcher = filtered[0].home_pitcher || '미정';
-        fetchSaju(awayPitcher, filtered[0].home_team, filtered[0].stadium, false);
-        fetchSaju(homePitcher, filtered[0].away_team, filtered[0].stadium, true);
+        fetchSaju(awayPitcher, filtered[0].home_team, filtered[0].stadium, false, '', filtered[0].away_team);
+        fetchSaju(homePitcher, filtered[0].away_team, filtered[0].stadium, true, '', filtered[0].home_team);
       } else {
         setSelectedSchedule(null);
       }
@@ -78,7 +87,7 @@ function App() {
   };
 
   // 개별 선발 투수의 Qwen AI 사주풀이 호출 (Lazy loading 및 파라미터 공급, 선발 투수 미정 시 호출 전면 차단)
-  const fetchSaju = async (pitcherName, opponentTeam, stadiumName, isHome, gameDate) => {
+  const fetchSaju = async (pitcherName, opponentTeam, stadiumName, isHome, gameDate, myTeam) => {
     const type = isHome ? 'home' : 'away';
     if (!pitcherName || pitcherName.trim() === '' || pitcherName === '미정') {
       setSajuResult(prev => ({ ...prev, [type]: '선발 투수가 지정되지 않아 도사님도 운세를 점치실 수 없네.' }));
@@ -87,7 +96,7 @@ function App() {
     setLoadingSaju(prev => ({ ...prev, [type]: true }));
     setSajuResult(prev => ({ ...prev, [type]: '' }));
     try {
-      const url = `${BACKEND_URL}/api/saju?pitcher=${encodeURIComponent(pitcherName)}&opponent=${encodeURIComponent(opponentTeam)}&stadium=${encodeURIComponent(stadiumName)}&date=${encodeURIComponent(gameDate || '')}`;
+      const url = `${BACKEND_URL}/api/saju?pitcher=${encodeURIComponent(pitcherName)}&opponent=${encodeURIComponent(opponentTeam)}&stadium=${encodeURIComponent(stadiumName)}&date=${encodeURIComponent(gameDate || '')}&my_team=${encodeURIComponent(myTeam || '')}`;
       const res = await fetch(url);
       if (!res.ok) throw new Error('사주 API 응답 실패');
       const data = await res.json();
@@ -96,7 +105,7 @@ function App() {
       console.error(err);
       setSajuResult(prev => ({ ...prev, [type]: '도사님이 마운드 기도를 하러 가셨는지 점괘를 낼 수 없구나. 다시 흔들어보시게.' }));
     } finally {
-      setLoadingSaju(prev => ({ ...prev, [type]: false }));
+      setSajuResult(prev => ({ ...prev, [type]: false }));
     }
   };
 
@@ -106,8 +115,8 @@ function App() {
     const awayPitcher = sched.away_pitcher || '미정';
     const homePitcher = sched.home_pitcher || '미정';
     // 양 팀 선발 투수 사주풀이 실시간 로드 (실제 DB 선발 투수 데이터 활용 및 경기 날짜 공급)
-    fetchSaju(awayPitcher, sched.home_team, sched.stadium, false, sched.date);
-    fetchSaju(homePitcher, sched.away_team, sched.stadium, true, sched.date);
+    fetchSaju(awayPitcher, sched.home_team, sched.stadium, false, sched.date, sched.away_team);
+    fetchSaju(homePitcher, sched.away_team, sched.stadium, true, sched.date, sched.home_team);
   };
 
   // 뉴스 목록 로드 & 백그라운드 자동 요약 연동
@@ -187,6 +196,79 @@ function App() {
     } catch (err) {
       console.error(err);
       setSelectedArticle({ ...item, content: '본문을 불러오는 데 실패했습니다. 다시 시도해 주세요.' });
+    }
+  };
+
+  // 관심 구단 토글 헬퍼
+  const toggleTeamSelect = (team) => {
+    setSelectedTeams(prev =>
+      prev.includes(team)
+        ? prev.filter(t => t !== team)
+        : [...prev, team]
+    );
+  };
+
+  // 실시간 이메일 브리핑 전송
+  const handleSendEmailBriefing = async () => {
+    if (!emailInput || !emailInput.includes('@')) {
+      alert('유효한 이메일 주소를 입력해 주세요.');
+      return;
+    }
+    if (selectedTeams.length === 0) {
+      alert('최소 하나 이상의 관심 구단을 선택해 주세요.');
+      return;
+    }
+
+    setSendingEmail(true);
+    setEmailResult(null);
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/send-email-briefing`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: emailInput, teams: selectedTeams })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || '이메일 발송 실패');
+
+      setEmailResult(data);
+      setToastMessage(`🎉 ${emailInput} 주소로 이메일 브리핑을 발송했습니다!`);
+      setTimeout(() => setToastMessage(''), 5000);
+    } catch (err) {
+      console.error(err);
+      alert(`이메일 발송 오류: ${err.message}`);
+    } finally {
+      setSendingEmail(false);
+    }
+  };
+
+  // 매일 브리핑 구독 등록
+  const handleSubscribeNewsletter = async () => {
+    if (!emailInput || !emailInput.includes('@')) {
+      alert('유효한 이메일 주소를 입력해 주세요.');
+      return;
+    }
+    if (selectedTeams.length === 0) {
+      alert('최소 하나 이상의 관심 구단을 선택해 주세요.');
+      return;
+    }
+
+    setSubscribing(true);
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/subscribe`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: emailInput, teams: selectedTeams })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || '구독 등록 실패');
+
+      setToastMessage(data.message);
+      setTimeout(() => setToastMessage(''), 5000);
+    } catch (err) {
+      console.error(err);
+      alert(`구독 등록 오류: ${err.message}`);
+    } finally {
+      setSubscribing(false);
     }
   };
 
@@ -278,11 +360,24 @@ function App() {
         >
           KBO 경기 일정 & 투수 사주풀이
         </button>
+        <button
+          onClick={() => setActiveTab('email')}
+          className={`py-3.5 px-4 text-xs md:text-sm font-bold border-b-2 transition ${activeTab === 'email' ? 'border-emerald-500 text-emerald-400' : 'border-transparent text-slate-400 hover:text-slate-200'}`}
+        >
+          ✉️ AI 이메일 브리핑 구독
+        </button>
       </div>
+
+      {/* Toast 토스트 알림 메시지 바 */}
+      {toastMessage && (
+        <div className="bg-emerald-500 text-slate-950 text-center py-2 px-4 font-bold text-xs md:text-sm shadow-md transition animate-bounce">
+          {toastMessage}
+        </div>
+      )}
 
       {/* 메인 레이아웃 */}
       <main className="flex-1 max-w-7xl w-full mx-auto p-4 md:p-6 flex flex-col">
-        {activeTab === 'news' ? (
+        {activeTab === 'news' && (
           <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 w-full">
             {/* 좌측 메인 영역 */}
             <section className="lg:col-span-3 flex flex-col space-y-6">
@@ -295,7 +390,7 @@ function App() {
                     value={search}
                     onChange={(e) => setSearch(e.target.value)}
                     onKeyDown={handleKeyDown}
-                    placeholder="KBO 구단명(한화, 삼성, 두산 등) 또는 키워드를 검색하고 Enter를 누르세요..."
+                    placeholder="KBO 구단명(한화, 삼성, 롯데 등) 또는 키워드를 검색하고 Enter를 누르세요..."
                     className="w-full pl-4 pr-12 py-2.5 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:bg-white text-sm transition-all"
                   />
                   <button
@@ -475,8 +570,10 @@ function App() {
               </div>
             </section>
           </div>
-        ) : (
-          /* 신규 사주 및 경기 일정 영역 */
+        )}
+
+        {/* 신규 사주 및 경기 일정 영역 */}
+        {activeTab === 'saju' && (
           <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 w-full">
             {/* 좌측: KBO 경기 일정 목록 */}
             <div className="bg-white p-5 rounded-xl shadow-sm border border-slate-100 flex flex-col space-y-4 lg:col-span-1">
@@ -604,6 +701,116 @@ function App() {
                 </div>
               )}
             </div>
+          </div>
+        )}
+
+        {activeTab === 'email' && (
+          <div className="max-w-4xl mx-auto w-full flex flex-col space-y-6">
+            {/* 상단 안내 카드 */}
+            <div className="bg-white rounded-xl p-6 shadow-sm border border-slate-100 space-y-5">
+              <div className="flex items-center space-x-3 pb-4 border-b border-slate-100">
+                <div className="w-10 h-10 bg-sky-100 rounded-full flex justify-center items-center text-sky-700 font-bold text-xl">✉️</div>
+                <div>
+                  <h2 className="text-xl font-bold text-slate-800">KBO AI 관심 구단 맞춤 이메일 브리핑</h2>
+                  <p className="text-xs text-slate-500">응원하는 구단을 선택하면 Qwen AI가 생성한 3줄 핵심 요약과 최신 뉴스를 발송해 드립니다.</p>
+                </div>
+              </div>
+
+              {/* 1. 관심 구단 선택 칩 */}
+              <div className="space-y-2">
+                <label className="text-sm font-bold text-slate-700 block">
+                  1. 관심 구단 선택 (복수 선택 가능)
+                </label>
+                <div className="flex flex-wrap gap-2.5 pt-1">
+                  {KBO_TEAMS.map(team => {
+                    const isSelected = selectedTeams.includes(team);
+                    return (
+                      <button
+                        key={team}
+                        type="button"
+                        onClick={() => toggleTeamSelect(team)}
+                        className={`px-4 py-2 rounded-lg text-xs font-bold border transition duration-150 flex items-center space-x-1.5 ${isSelected
+                          ? 'bg-emerald-500 text-slate-950 border-emerald-400 shadow-sm scale-105'
+                          : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'
+                          }`}
+                      >
+                        <span>{isSelected ? '✓' : '+'}</span>
+                        <span>{team}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* 2. 이메일 입력 폼 및 발송 버튼 */}
+              <div className="space-y-2 pt-3">
+                <label className="text-sm font-bold text-slate-700 block">
+                  2. 수신 이메일 주소 입력
+                </label>
+                <div className="flex flex-col sm:flex-row gap-3">
+                  <input
+                    type="email"
+                    value={emailInput}
+                    onChange={(e) => setEmailInput(e.target.value)}
+                    placeholder="example@email.com"
+                    className="flex-1 px-4 py-2.5 border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-emerald-500"
+                  />
+                  <div className="flex space-x-2">
+                    <button
+                      onClick={handleSendEmailBriefing}
+                      disabled={sendingEmail}
+                      className="px-5 py-2.5 bg-sky-950 text-white rounded-lg text-sm font-bold hover:bg-sky-900 transition disabled:opacity-50 flex items-center space-x-2 whitespace-nowrap shadow-sm"
+                    >
+                      {sendingEmail ? (
+                        <>
+                          <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                          <span>생성 & 발송 중...</span>
+                        </>
+                      ) : (
+                        <span>✉️ 지금 브리핑 받기</span>
+                      )}
+                    </button>
+                    <button
+                      onClick={handleSubscribeNewsletter}
+                      disabled={subscribing}
+                      className="px-5 py-2.5 bg-emerald-500 text-slate-950 rounded-lg text-sm font-extrabold hover:bg-emerald-400 transition disabled:opacity-50 flex items-center space-x-2 whitespace-nowrap shadow-sm"
+                    >
+                      {subscribing ? (
+                        <span>등록 중...</span>
+                      ) : (
+                        <span>🔔 정기 구독 등록</span>
+                      )}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* 발송 결과 및 미리보기 카드 */}
+            {emailResult && (
+              <div className="bg-white rounded-xl p-6 shadow-sm border border-emerald-200 space-y-4 animate-fade-in">
+                <div className="flex justify-between items-center pb-3 border-b border-emerald-100">
+                  <h3 className="font-bold text-emerald-800 flex items-center space-x-2">
+                    <span>✅ 이메일 전송 완료!</span>
+                    <span className="text-xs font-normal text-slate-500">({emailResult.email})</span>
+                  </h3>
+                  <span className="text-xs px-2.5 py-1 bg-emerald-100 text-emerald-800 font-bold rounded-md">
+                    선택 구단: {emailResult.teams.join(', ')}
+                  </span>
+                </div>
+
+                <div className="bg-slate-50 p-4 rounded-lg border border-slate-200 space-y-2">
+                  <h4 className="text-xs font-bold text-sky-800 uppercase tracking-wider">🤖 전송된 Qwen AI 브리핑 내용 미리보기</h4>
+                  <div className="text-xs md:text-sm text-slate-700 whitespace-pre-wrap leading-relaxed antialiased">
+                    {emailResult.preview_summary}
+                  </div>
+                </div>
+
+                <p className="text-xs text-emerald-700 font-semibold bg-emerald-50 p-3 rounded-lg border border-emerald-100">
+                  💡 {emailResult.message}
+                </p>
+              </div>
+            )}
           </div>
         )}
       </main>

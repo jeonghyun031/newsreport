@@ -48,41 +48,39 @@ client = OpenAI(
 )
 
 # =========================================================================
-# KBO 구단별 대표 선발 투수 생년월일 사전 (사주 명리 정합성 확보용)
+# [1] DB 동적 데이터 수집 및 헬퍼 모듈
 # =========================================================================
-PITCHER_BIRTHDAYS = {
-    "원태인": "2000년 4월 6일",
-    "류현진": "1987년 3월 25일",
-    "양현종": "1988년 3월 1일",
-    "고영표": "1991년 9월 16일",
-    "곽빈": "1999년 5월 28일",
-    "임찬규": "1992년 11월 20일",
-    "김광현": "1988년 7월 22일",
-    "반즈": "1995년 10월 1일",
-    "하트": "1992년 11월 23일",
-    "후라도": "1996년 1월 30일"
-}
 
-# =========================================================================
-# [2] 로컬 백업/Mock 데이터 정의 (DB 미연동 시 롤백용)
-# =========================================================================
-MOCK_TALENT_STATS = {
-    "원태인": {"team": "삼성 라이온즈", "stuff": 115, "location": 82, "crisis_mgmt": 95},
-    "류현진": {"team": "한화 이글스", "stuff": 98, "location": 125, "crisis_mgmt": 110},
-    "양현종": {"team": "KIA 타이거즈", "stuff": 95, "location": 105, "crisis_mgmt": 108}
-}
+def fetch_pitcher_birthday(pitcher_name, conn=None):
+    """
+    kbo_schedule 테이블 등 DB에서 선수의 생년월일을 동적으로 조회합니다.
+    DB에 정보가 없는 경우 빈 문자열("")을 반환하여 LLM에서 자율 해석하도록 합니다.
+    """
+    birthday = ""
+    if not conn:
+        return birthday
 
-MOCK_NEWS_LIST = {
-    "원태인": [
-        {"title": "원태인, 무더위 속 체력 저하 우려... 지난 경기 4이닝 고전", "content_raw": "최근 투구 이닝이 많아 체력 소모가 다소 심한 편임"},
-        {"title": "감독 왈, '원태인이 어깨 무거워 보이지만 끝까지 믿는다'", "content_raw": "구단의 전폭적인 지지를 받으나 피로도 관리가 시급"},
-        {"title": "KIA 최형우, 원태인 대상 통산 5홈런 극강 천적", "content_raw": "천적 타자와의 승부가 오늘 경기의 핵심 변수"}
-    ]
-}
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT birthday FROM kbo_schedule
+                WHERE (away_pitcher = %s OR home_pitcher = %s)
+                  AND birthday IS NOT NULL AND birthday != ''
+                ORDER BY date DESC
+                LIMIT 1
+                """,
+                (pitcher_name, pitcher_name)
+            )
+            row = cur.fetchone()
+            if row and row.get("birthday"):
+                birthday = row["birthday"]
+                print(f"📅 DB kbo_schedule에서 '{pitcher_name}' 생일 로드: {birthday}")
+    except Exception as e:
+        print(f"⚠️ DB 생일 동적 조회 스킵 (테이블/컬럼 미존재 또는 DB 오류): {e}")
 
-# =========================================================================
-# [3] 추후 DB 연동을 완벽히 고려한 데이터 수집 모듈 (Interface)
-# =========================================================================
+    return birthday
+
 
 def get_db_connection():
     """.env 설정을 기반으로 MySQL 커넥션을 반환합니다."""
@@ -97,55 +95,59 @@ def get_db_connection():
     )
 
 
-def fetch_kbo_talent_stats(pitcher_name, opponent_team="상대팀", stadium_name="야구장", conn=None):
+def fetch_kbo_talent_stats(pitcher_name, opponent_team="상대팀", stadium_name="야구장", conn=None, my_team=None):
     """
-    KBO Talent 정형 데이터베이스에서 선수의 피칭 세부 지표를 쿼리합니다.
+    KBO Talent 정형 데이터베이스에서 선수의 피칭 세부 지표를 동적으로 쿼리합니다.
     """
-    # 1) 기본 롤백 데이터 설정
-    stats = MOCK_TALENT_STATS.get(pitcher_name, {"team": "KBO 구단", "stuff": 100, "location": 100, "crisis_mgmt": 100})
-    stats["opponent"] = opponent_team  # 경기 매치업에 따른 실제 상대팀 정보 연동
-    stats["stadium"] = stadium_name  # 실제 경기 장소 연동
+    stats = {
+        "team": my_team or "KBO 구단",
+        "stuff": 100,
+        "location": 100,
+        "crisis_mgmt": 100,
+        "opponent": opponent_team,
+        "stadium": stadium_name
+    }
     
     if not conn:
         return stats
         
     try:
         with conn.cursor() as cursor:
-            # 🔮 [추후 정형 DB 테이블 연결 시 아래 SQL 활용]
-            # SQL 예시:
-            # sql = """
-            #     SELECT team, stuff_plus AS stuff, location_plus AS location, oswc AS crisis_mgmt, opponent, stadium
-            #     FROM kbo_talent_stats 
-            #     WHERE pitcher_name = %s
-            #     LIMIT 1
-            # """
-            # cursor.execute(sql, (pitcher_name,))
-            # db_result = cursor.fetchone()
-            # if db_result:
-            #     stats = db_result
-            pass
-    except Exception as e:
-        print(f"⚠️ KBO Talent 스탯 조회 실패 (백업용 로컬 데이터 사용): {e}")
+            # kbo_talent_stats 테이블이 존재할 경우 동적 쿼리 수행
+            sql = """
+                SELECT team, stuff_plus AS stuff, location_plus AS location, oswc AS crisis_mgmt
+                FROM kbo_talent_stats 
+                WHERE pitcher_name = %s
+                LIMIT 1
+            """
+            cursor.execute(sql, (pitcher_name,))
+            db_result = cursor.fetchone()
+            if db_result:
+                stats.update(db_result)
+                if my_team:
+                    stats["team"] = my_team
+                stats["opponent"] = opponent_team
+                stats["stadium"] = stadium_name
+    except Exception:
+        pass
         
     return stats
 
 
 def fetch_daum_news_summary(pitcher_name, conn):
     """
-    다음 기사 크롤링 DB 테이블(news_articles)에서 선수의 최근 뉴스 정보를 쿼리합니다.
+    다음 기사 크롤링 DB 테이블(news_articles)에서 선수의 실시간 기사를 동적으로 쿼리합니다.
     """
-    # 1) 기본 롤백 데이터 설정
-    news_list = MOCK_NEWS_LIST.get(pitcher_name, [
-        {"title": f"{pitcher_name}, 선발 출격 준비 완료", "content_raw": "구위 및 당일 컨디션 조율 집중"},
-        {"title": f"타선의 지원 여부가 {pitcher_name}의 승리 여부를 결정할 것", "content_raw": "득점권 타선의 적절한 타격 지원 필요"}
-    ])
+    news_list = [
+        {"title": f"{pitcher_name}, 선발 출격 준비 완료", "content_raw": "당일 컨디션 조율 및 마운드 구위 점검 중"},
+        {"title": f"타선의 지원 여부가 {pitcher_name}의 승리를 좌우할 전망", "content_raw": "야수진의 안타 및 득점 지원과 수비 집중력 요구"}
+    ]
     
     if not conn:
         return news_list
         
     try:
         with conn.cursor() as cursor:
-            # 실시간 수집된 news_articles 테이블 활용
             sql = """
                 SELECT title, content 
                 FROM news_articles 
@@ -158,16 +160,15 @@ def fetch_daum_news_summary(pitcher_name, conn):
             db_news = cursor.fetchall()
             
             if db_news:
-                # content 컬럼 데이터를 content_raw 키값에 바인딩
                 news_list = []
                 for row in db_news:
                     news_list.append({
                         "title": row["title"],
                         "content_raw": row["content"]
                     })
-                print(f"📰 DB에서 '{pitcher_name}' 관련 다음 크롤링 기사 {len(db_news)}건을 동적으로 로드했습니다.")
+                print(f"📰 DB news_articles에서 '{pitcher_name}' 기사 {len(db_news)}건 동적 로드 완료")
     except Exception as e:
-        print(f"⚠️ 다음 크롤링 뉴스 조회 실패 (백업용 로컬 뉴스 사용): {e}")
+        print(f"⚠️ 실시간 뉴스 쿼리 스킵 (기본 템플릿 적용): {e}")
         
     return news_list
 
@@ -314,7 +315,7 @@ def get_pitcher_dl_prediction(pitcher_name):
         conn.close()
 
 
-def get_baseball_saju(pitcher_name, opponent_team="상대팀", stadium_name="야구장", game_date=None):
+def get_baseball_saju(pitcher_name, opponent_team="상대팀", stadium_name="야구장", game_date=None, my_team=None):
     # 1) 경기 일자(오늘의 일진 날짜) 기본값 세팅
     import datetime
     if not game_date:
@@ -328,7 +329,7 @@ def get_baseball_saju(pitcher_name, opponent_team="상대팀", stadium_name="야
         print(f"⚠️ DB 연결 비활성화 또는 설정 정보 오류 (로컬 백업 모드 실행): {e}")
 
     # 3) 각 데이터 소스별 모듈을 통한 개별 수집 (매치업 상대팀 및 구장 정보 공급)
-    stats = fetch_kbo_talent_stats(pitcher_name, opponent_team, stadium_name, conn)
+    stats = fetch_kbo_talent_stats(pitcher_name, opponent_team, stadium_name, conn, my_team)
     news_list = fetch_daum_news_summary(pitcher_name, conn)
 
     # DB 사용 완료 후 종료
@@ -359,7 +360,7 @@ def get_baseball_saju(pitcher_name, opponent_team="상대팀", stadium_name="야
     rag_text = ""
     if RAG_OK:
         try:
-            birthday = PITCHER_BIRTHDAYS.get(pitcher_name, "")
+            birthday = fetch_pitcher_birthday(pitcher_name, conn)
             saju_pillar = get_saju_pillar(birthday) if birthday else {}
             rag_text = query_rag(pitcher_name, saju_pillar, stats, top_k=4)
         except Exception as e:
@@ -389,7 +390,7 @@ def get_baseball_saju(pitcher_name, opponent_team="상대팀", stadium_name="야
         news_text += f"{idx}. 제목: {news['title']}\n   내용: {news['content_raw'][:150]}...\n"
 
     # 투수의 생년월일 매핑
-    birthday = PITCHER_BIRTHDAYS.get(pitcher_name, "알 수 없음 (도사의 혜안으로 사주 추출)")
+    birthday = fetch_pitcher_birthday(pitcher_name, conn) or "알 수 없음 (도사의 혜안으로 사주 추출)"
 
     user_prompt = f"""
 [오늘의 선발 투수 정보]

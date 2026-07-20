@@ -8,6 +8,10 @@ RUN pip install --no-cache-dir \
     webdriver-manager \
     beautifulsoup4 \
     pandas \
-    apache-airflow-providers-apache-spark==4.1.3
+    apache-airflow-providers-apache-spark==4.1.3 \
+    transformers \
+    torch \
+    sentencepiece \
+    sentence-transformers
 
 USER airflow
