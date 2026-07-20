@@ -268,7 +268,7 @@ with DAG(
     'daum_kbo_schedule_spark_pipeline',
     default_args=default_args,
     description='Daum KBO 경기 일정 및 선발투수 통합 크롤링 후 Spark 처리 파이프라인',
-    schedule_interval='0 6 * * *',  # 매일 오후 3시 KST (영국 UTC 기준 06:00)
+    schedule_interval='0 6, 14 * * *',  # 매일 오후 3시, 11시 KST (영국 UTC 기준 06:00)
     catchup=False,
     is_paused_upon_creation=False,
     tags=['crawling', 'kbo', 'schedule', 'spark'],
