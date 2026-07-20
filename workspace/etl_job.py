@@ -40,7 +40,7 @@ aws_rds_endpoint = env_dict.get("AWS_RDS_ENDPOINT", os.getenv("AWS_RDS_ENDPOINT"
 db_port = env_dict.get("DB_PORT", os.getenv("DB_PORT", "3306"))
 db_user = env_dict.get("DB_USER", os.getenv("DB_USER", "admin"))
 db_password = env_dict.get("DB_PASSWORD", os.getenv("DB_PASSWORD", "12341234"))
-db_name = env_dict.get("DB_NAME", os.getenv("DB_NAME", "articel_db"))
+db_name = env_dict.get("DB_NAME", os.getenv("DB_NAME", "total_db"))
 
 jdbc_url = f"jdbc:mysql://{aws_rds_endpoint}:{db_port}/{db_name}?useSSL=false&allowPublicKeyRetrieval=true"
 db_properties = {

@@ -10,10 +10,13 @@ RUN pip install --no-cache-dir \
     pymysql \
     python-dotenv \
     requests \
-    cryptography
+    cryptography \
+    openai
 
-# 소스 코드 복사
-COPY . .
+# 소스 코드 복사 (빌드 컨텍스트가 루트이므로 backend/ 폴더 지정)
+COPY backend/ .
+COPY saju.py .
+COPY deep_learning/ ./deep_learning/
 
 EXPOSE 8000
 

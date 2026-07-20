@@ -68,7 +68,7 @@ def get_db_connection():
     db_port = cfg.get("DB_PORT", "3306")
     db_user = cfg.get("DB_USER", "admin")
     db_password = cfg.get("DB_PASSWORD", "12341234")
-    db_name = cfg.get("DB_NAME", "articel_db")
+    db_name = cfg.get("DB_NAME", "total_db")
     
     return pymysql.connect(
         host=aws_rds_endpoint,
