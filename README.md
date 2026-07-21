@@ -48,7 +48,7 @@ graph TB
     subgraph DB["🗄️ AWS RDS MySQL"]
         NewsDB["total_db.news_articles\nKBO 뉴스 기사"]
         ScheduleDB["statistics_db.kbo_schedule\nKBO 경기 일정 & 선발투수"]
-        SubscribersDB["total_db.email_subscribers\n이메일 정기 구독자 정보"]
+        UserInfoDB["total_db.user_info / email_subscribers\n구독자 이메일, Gmail 16자리 앱 비밀번호, 구단 정보"]
         SajuKB["total_db.saju_knowledge\n명리학 지식베이스 임베딩"]
         SentimentCache["total_db.news_sentiment_cache\n감성분석 캐시"]
         PitcherStats["statistics_db.kbo_pitcher_stats / training_features / model_weights\n투수 통계 및 딥러닝 가중치"]
@@ -343,6 +343,8 @@ SMTP_SERVER=smtp.gmail.com
 SMTP_PORT=587
 SMTP_USER=your_email@gmail.com
 SMTP_PASSWORD=your_app_password
+
+SLACK_WEBHOOK_URL=https://hooks.slack.com/services/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
 ```
 
 ### 2. Docker Compose로 전체 시스템 구동
