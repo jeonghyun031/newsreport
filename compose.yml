@@ -165,6 +165,10 @@ services:
       context: ./kbo-ui
       dockerfile: Dockerfile
     container_name: kbo-frontend
+    environment:
+      - CHOKIDAR_USEPOLLING=true
+      - WATCHPACK_POLLING=true
+      - FAST_REFRESH=true
     ports:
       - "3000:3000"
     volumes:
