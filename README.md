@@ -343,6 +343,8 @@ SMTP_SERVER=smtp.gmail.com
 SMTP_PORT=587
 SMTP_USER=your_email@gmail.com
 SMTP_PASSWORD=your_app_password
+
+SLACK_WEBHOOK_URL=https://hooks.slack.com/services/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
 ```
 
 ### 2. Docker Compose로 전체 시스템 구동
