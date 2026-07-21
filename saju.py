@@ -53,31 +53,53 @@ client = OpenAI(
 
 def fetch_pitcher_birthday(pitcher_name, conn=None):
     """
-    kbo_schedule 테이블 등 DB에서 선수의 생년월일을 동적으로 조회합니다.
-    DB에 정보가 없는 경우 빈 문자열("")을 반환하여 LLM에서 자율 해석하도록 합니다.
+    total_db.pitcher_stats 및 kbo_schedule 테이블에서 선수의 생년월일(birth)을 100% 동적으로 조회합니다.
     """
     birthday = ""
-    if not conn:
-        return birthday
+    db_conn = conn
+    should_close = False
+    if not db_conn:
+        try:
+            db_conn = get_db_connection()
+            should_close = True
+        except Exception:
+            return birthday
 
     try:
-        with conn.cursor() as cur:
+        with db_conn.cursor() as cur:
+            # 1. pitcher_stats 테이블에서 birth 컬럼 동적 조회
             cur.execute(
                 """
-                SELECT birthday FROM kbo_schedule
-                WHERE (away_pitcher = %s OR home_pitcher = %s)
-                  AND birthday IS NOT NULL AND birthday != ''
-                ORDER BY date DESC
+                SELECT birth FROM pitcher_stats
+                WHERE name = %s AND birth IS NOT NULL AND birth != ''
                 LIMIT 1
                 """,
-                (pitcher_name, pitcher_name)
+                (pitcher_name,)
             )
             row = cur.fetchone()
-            if row and row.get("birthday"):
-                birthday = row["birthday"]
-                print(f"📅 DB kbo_schedule에서 '{pitcher_name}' 생일 로드: {birthday}")
+            if row and row.get("birth"):
+                birthday = str(row["birth"]).strip()
+                print(f"📅 DB pitcher_stats에서 '{pitcher_name}' 생일 로드: {birthday}")
+            else:
+                # 2. kbo_schedule 테이블 호환 조회
+                cur.execute(
+                    """
+                    SELECT birthday FROM kbo_schedule
+                    WHERE (away_pitcher = %s OR home_pitcher = %s)
+                      AND birthday IS NOT NULL AND birthday != ''
+                    ORDER BY game_date DESC LIMIT 1
+                    """,
+                    (pitcher_name, pitcher_name)
+                )
+                row2 = cur.fetchone()
+                if row2 and row2.get("birthday"):
+                    birthday = str(row2["birthday"]).strip()
+                    print(f"📅 DB kbo_schedule에서 '{pitcher_name}' 생일 로드: {birthday}")
     except Exception as e:
-        print(f"⚠️ DB 생일 동적 조회 스킵 (테이블/컬럼 미존재 또는 DB 오류): {e}")
+        print(f"⚠️ DB 생일 동적 조회 스킵 (폴백 자율 추출 적용): {e}")
+
+    if should_close and db_conn:
+        db_conn.close()
 
     return birthday
 
@@ -97,10 +119,10 @@ def get_db_connection():
 
 def fetch_kbo_talent_stats(pitcher_name, opponent_team="상대팀", stadium_name="야구장", conn=None, my_team=None):
     """
-    kbo_pitcher_stats 테이블에서 투수의 실시간 시즌 성적(ERA, WHIP, 승/패, 탈삼진 등)을 쿼리하여
-    오행 기운(Stuff+, Location+, Crisis_Mgmt) 및 명리학적 밸런스를 100% 동적 산출합니다.
+    total_db.pitcher_stats 테이블의 실시간 성적 (so, hr, h, r, avg2 등)을 동적 집계하여
+    투수마다 개별적인 오행 지표(Stuff+, Location+, Crisis_Mgmt) 및 명리 밸런스를 100% 동적 산출합니다.
     """
-    # 기본 해시 기반 폴백 지표
+    # 기본 해시 기반 시드 폴백
     name_hash = sum(ord(c) for c in pitcher_name)
     stuff_val = 90 + (name_hash * 7) % 35
     loc_val = 88 + (name_hash * 13) % 35
@@ -121,72 +143,69 @@ def fetch_kbo_talent_stats(pitcher_name, opponent_team="상대팀", stadium_name
         "stadium": stadium_name
     }
 
-    try:
-        db_conn = conn or get_db_connection()
-        with db_conn.cursor() as cursor:
-            # 1. kbo_pitcher_stats 테이블에서 투수 최신 성적 동적 쿼리
-            sql_pitcher = """
-                SELECT season, team, era, games, wins, losses, saves, holds, whip, so, bb, ip
-                FROM kbo_pitcher_stats
-                WHERE player_name = %s
-                ORDER BY season DESC, id DESC
-                LIMIT 1
-            """
-            cursor.execute(sql_pitcher, (pitcher_name,))
-            row = cursor.fetchone()
+    db_conn = conn
+    should_close = False
+    if not db_conn:
+        try:
+            db_conn = get_db_connection()
+            should_close = True
+        except Exception:
+            pass
 
-            if not row:
-                # 2. statistics_db.kbo_pitcher_stats 풀네임 쿼리 시도
-                sql_fallback = """
-                    SELECT season, team, era, games, wins, losses, saves, holds, whip, so, bb, ip
-                    FROM statistics_db.kbo_pitcher_stats
-                    WHERE player_name = %s
-                    ORDER BY season DESC, id DESC
-                    LIMIT 1
+    if db_conn:
+        try:
+            with db_conn.cursor() as cursor:
+                # 1. total_db.pitcher_stats 테이블에서 투수 실시간 기록 집계
+                sql_pitcher = """
+                    SELECT 
+                        COUNT(*) AS game_cnt,
+                        AVG(so) AS avg_so,
+                        AVG(r) AS avg_r,
+                        AVG(h) AS avg_h,
+                        AVG(hr) AS avg_hr,
+                        AVG(avg2) AS avg_opp_ba
+                    FROM pitcher_stats
+                    WHERE name = %s
                 """
-                cursor.execute(sql_fallback, (pitcher_name,))
+                cursor.execute(sql_pitcher, (pitcher_name,))
                 row = cursor.fetchone()
 
-            if row:
-                season = row.get("season") or 2026
-                db_team = row.get("team")
-                era = float(row.get("era") or 3.50)
-                whip = float(row.get("whip") or 1.25)
-                wins = int(row.get("wins") or 0)
-                losses = int(row.get("losses") or 0)
-                so = int(row.get("so") or 0)
-                bb = int(row.get("bb") or 0)
-                ip = str(row.get("ip") or "0")
+                if row and row.get("game_cnt") and row["game_cnt"] > 0:
+                    cnt = row["game_cnt"]
+                    avg_so = float(row.get("avg_so") or 1.0)
+                    avg_r = float(row.get("avg_r") or 1.0)
+                    avg_h = float(row.get("avg_h") or 2.0)
+                    avg_hr = float(row.get("avg_hr") or 0.2)
+                    opp_ba = float(row.get("avg_opp_ba") or 0.250)
 
-                # DB 실제 성적 기반 오행 스탯 계산 (100 기준 수치 변환)
-                calc_stuff = int(max(70, min(140, 100 + (so * 0.5 - bb * 0.3) - (era * 4))))
-                calc_location = int(max(70, min(140, 100 + (1.30 - whip) * 25)))
-                calc_crisis = int(max(70, min(140, 100 + (4.00 - era) * 8 + (wins - losses) * 2)))
+                    # DB 실제 스탯 ➔ 오행 수치 환산
+                    calc_stuff = int(max(70, min(140, 95 + (avg_so * 15) - (avg_hr * 20))))
+                    calc_location = int(max(70, min(140, 115 - (opp_ba * 100) - (avg_h * 5))))
+                    calc_crisis = int(max(70, min(140, 110 - (avg_r * 15))))
 
-                # 우세 오행 재판정
-                if calc_stuff >= calc_location and calc_stuff >= calc_crisis:
-                    main_element = "화(火) - 불꽃 구위"
-                elif calc_location >= calc_stuff and calc_location >= calc_crisis:
-                    main_element = "금(金) - 칼날 제구"
-                else:
-                    main_element = "토(土) - 마운드 담력"
+                    # 우세 오행 결정
+                    if calc_stuff >= calc_location and calc_stuff >= calc_crisis:
+                        main_element = "화(火) - 불꽃 구위"
+                    elif calc_location >= calc_stuff and calc_location >= calc_crisis:
+                        main_element = "금(金) - 칼날 제구"
+                    else:
+                        main_element = "토(土) - 마운드 담력"
 
-                raw_stats_summary = f"{season}시즌 ERA {era:.2f} | {wins}승 {losses}패 | WHIP {whip:.2f} | 탈삼진 {so}개 ({ip}이닝)"
+                    raw_stats_summary = f"출전 {cnt}경기 | 평균 탈삼진 {avg_so:.1f}개 | 피안타율 {opp_ba:.3f} | 경기당 실점 {avg_r:.1f}점"
 
-                stats.update({
-                    "team": db_team or my_team or "KBO 구단",
-                    "stuff": calc_stuff,
-                    "location": calc_location,
-                    "crisis_mgmt": calc_crisis,
-                    "element": main_element,
-                    "raw_stats_summary": raw_stats_summary
-                })
-                print(f"📊 [kbo_pitcher_stats DB 연동 완료] '{pitcher_name}': {raw_stats_summary}")
-
-        if not conn and db_conn:
-            db_conn.close()
-    except Exception as db_err:
-        print(f"⚠️ kbo_pitcher_stats DB 쿼리 예외 (동적 시드 모드 활용): {db_err}")
+                    stats.update({
+                        "stuff": calc_stuff,
+                        "location": calc_location,
+                        "crisis_mgmt": calc_crisis,
+                        "element": main_element,
+                        "raw_stats_summary": raw_stats_summary
+                    })
+                    print(f"📊 [pitcher_stats DB 연동 성공] '{pitcher_name}': {raw_stats_summary}")
+        except Exception as db_err:
+            print(f"⚠️ pitcher_stats DB 쿼리 예외: {db_err}")
+        finally:
+            if should_close and db_conn:
+                db_conn.close()
 
     if my_team:
         stats["team"] = my_team
@@ -467,20 +486,13 @@ def get_baseball_saju(pitcher_name, opponent_team="상대팀", stadium_name="야
 - K-Location+ (제구력): {stats['location']} (100 기준)
 - FCB.OSWC (위기 상황 담력): {stats['crisis_mgmt']} (100 기준)
 
-[비정형 데이터: 최근 다음 뉴스 기사 요약]
+[비정형 데이터: 최근 뉴스 및 딥러닝 분석]
 {news_text}{sentiment_text}
 {dl_text}
 {rag_text}
 """
 
-    dl_status = []
-    if SENTIMENT_OK: dl_status.append("감성분석✅")
-    if RAG_OK:       dl_status.append("RAG명리✅")
-    if dl_prediction: dl_status.append("TabNet딥러닝✅")
-    mode_str = " | ".join(dl_status) if dl_status else "기본모드"
-    print(f"🔮 야잘알 도사가 엽전을 던져 운세를 보고 있습니다... [{mode_str}] 잠시만 기다리시게...\n")
-
-    # system_instruction과 user_prompt 슬림 조립 (속도 초고속화)
+    # system_instruction과 user_prompt 조립
     full_prompt = f"""{system_instruction}
 
 아래 제공되는 오늘 선발 투수의 운세를 명리학에 기반해 명확하고 신속하게 점쳐 주시오.
@@ -488,15 +500,33 @@ def get_baseball_saju(pitcher_name, opponent_team="상대팀", stadium_name="야
 
 {user_prompt}"""
 
-    url = "https://code.cu.ac.kr/llm/v1/chat/completions"
-    # OpenAI SDK client를 통한 서비스
+    # 투수별 DB 팩트 기반 풍부한 동적 사주풀이 조립
+    raw_summary = stats.get("raw_stats_summary", "최신 기록 수집 완료")
+    dynamic_saju_result = f"""# 🔮 [{pitcher_name}] 오늘의 야구 사주풀이
+
+## 1. 👁️ 오늘 선발의 운세 총평
+{game_date} 마운드에 오르는 **{stats['team']}**의 **{pitcher_name}** 투수(생년월일: {birthday})는 **{stats.get('element', '불꽃 구위')}**의 기운이 강렬하게 감도는 날이로다. 상대인 **{stats.get('opponent', '상대팀')}** 타선의 맹렬한 공격에 맞서 마운드 위 멘탈 조율과 수비진의 지원이 오늘 승패의 핵심 분수령이 되리라.
+
+## 2. ☯️ 데이터로 보는 오행의 기운 (KBO Talent 해석)
+*   **K-Stuff+ (구위 {stats['stuff']}):** 마운드를 타오르게 하는 불꽃 구위의 기세 (100 기준).
+*   **K-Location+ (제구 {stats['location']}):** 타자 코너 구석을 예리하게 찌르는 제구력.
+*   **FCB.OSWC (위기 담력 {stats['crisis_mgmt']}):** 위기 상황 주자 누상 시 흔들리지 않는 태산의 담력.
+*   *📊 DB 실시간 기운 지표:* `{raw_summary}`
+
+## 3. ⚠️ 오늘 피해야 할 액운과 상극 타자 (기사/데이터 기반)
+**{stats.get('opponent', '상대팀')}** 타선의 득점권 찬스에서 초구 스트라이크 비율을 높여 상대의 기선을 제압해야 하느니, 초반 방심은 액운을 부를 수 있음을 명심하라.
+
+## 4. 🧧 팬들을 위한 행운의 관전 비책
+**{stats['team']}** 팬들은 마운드 위 **{pitcher_name}** 투수의 구위가 꺾이지 않도록 뜨거운 응원의 기운을 보내어 마운드의 오행 균형을 완성하라."""
+
+    # 1. OpenAI SDK client를 통한 서비스
     try:
         response = client.chat.completions.create(
             model="Qwen/Qwen3.5-35B-A3B-FP8",
             messages=[{"role": "user", "content": full_prompt}],
             max_tokens=650,
             temperature=0.7,
-            timeout=35
+            timeout=30
         )
         if response.choices and response.choices[0].message:
             content = response.choices[0].message.content
@@ -505,6 +535,7 @@ def get_baseball_saju(pitcher_name, opponent_team="상대팀", stadium_name="야
     except Exception as sdk_err:
         print(f"⚠️ OpenAI SDK 호출 예외: {sdk_err}")
 
+    # 2. REST API 폴백
     url = "https://code.cu.ac.kr/llm/v1/chat/completions"
     headers = {
         "Authorization": f"Bearer {API_KEY}",
@@ -522,7 +553,7 @@ def get_baseball_saju(pitcher_name, opponent_team="상대팀", stadium_name="야
     }
     
     try:
-        resp = requests.post(url, headers=headers, json=data, timeout=35)
+        resp = requests.post(url, headers=headers, json=data, timeout=30)
         resp.raise_for_status()
         resp_data = resp.json()
         choices = resp_data.get("choices", [])
@@ -531,11 +562,10 @@ def get_baseball_saju(pitcher_name, opponent_team="상대팀", stadium_name="야
             content = msg_obj.get("content") or choices[0].get("text")
             if content and content.strip():
                 return content.strip()
-        return "🔮 [도사의 조언] 오늘 마운드 위 기운이 강렬하게 소용돌이치고 있으니, 구위 조율과 수비진의 조화를 꾀하라."
+        return dynamic_saju_result
     except Exception as e:
-        err_msg = f"🔮 [도사의 조언] {pitcher_name} 투수의 마운드 기운이 맹렬하도다. 당일 컨디션 조율과 정밀한 제구력이 오늘 경기의 승패를 가르리라."
         print(f"⚠️ REST API 호출 예외: {e}")
-        return err_msg
+        return dynamic_saju_result
 
 if __name__ == "__main__":
     # 단독 테스트를 위해 결과를 콘솔에 출력합니다.
