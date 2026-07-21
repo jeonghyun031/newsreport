@@ -1,8 +1,9 @@
 from pyspark.sql import SparkSession
 from pyspark.sql.types import StructType, StructField, StringType, IntegerType, DoubleType
-from pyspark.sql.functions import col, trim, when, lit
+from pyspark.sql.functions import col, trim, when
 import os
 import sys
+import traceback
 
 # ==============================================================================
 # [설정] .env 설정 파일 유연한 로드 (로컬 / 컨테이너 환경 양방향 호환)
@@ -51,7 +52,7 @@ print(f"   - Database: {db_name}")
 # ==============================================================================
 print("🚀 [DEBUG] Spark Session 시작 중...")
 spark = SparkSession.builder \
-    .appName("KBO_Hitter_ETL") \
+    .appName("KBO_Player_ETL") \
     .config("spark.jars.packages", "com.mysql:mysql-connector-j:8.3.0") \
     .getOrCreate()
 
@@ -60,16 +61,24 @@ spark.sparkContext.setLogLevel("WARN")
 print("✅ [DEBUG] Spark Session 생성 완료.")
 
 # ==============================================================================
-# [설정] 대상 CSV 파일 경로 정의
+# [설정] 대상 CSV 파일 경로 정의 (타자 / 투수 각각 생성)
 # ==============================================================================
-# 외부 파라미터가 있으면 가져오고, 없으면 기본값인 "data" 사용
 target_month = sys.argv[1] if len(sys.argv) > 1 else "data"
-csv_path = f"/opt/shared/players/hitter_stats_{target_month}.csv"
 
-print(f"📂 [DEBUG] 대상 파일 경로: {csv_path}")
+def resolve_file_path(filename):
+    primary = f"/opt/shared/players/{filename}"
+    alternative = f"/home/jovyan/work/players/{filename}"
+    if os.path.exists(primary):
+        return primary
+    elif os.path.exists(alternative):
+        return alternative
+    return primary
+
+hitter_csv_path = resolve_file_path(f"hitter_stats_{target_month}.csv")
+pitcher_csv_path = resolve_file_path(f"pitcher_stats_{target_month}.csv")
 
 # ==============================================================================
-# [Schema] 타자 데이터 스키마 정의 (8개 항목 + 기본 정보)
+# [Schema] 타자 및 투수 스키마 정의
 # ==============================================================================
 hitter_schema = StructType([
     StructField("name", StringType(), True),
@@ -86,60 +95,45 @@ hitter_schema = StructType([
     StructField("gdp", IntegerType(), True)
 ])
 
+# 투수 스키마 정의 (크롤링 결과 컬럼: name, birth, date, era1, h, hr, era2)
+pitcher_schema = StructType([
+    StructField("name", StringType(), True),
+    StructField("birth", StringType(), True),
+    StructField("date", StringType(), True),
+    StructField("era1", DoubleType(), True),
+    StructField("h", IntegerType(), True),
+    StructField("hr", IntegerType(), True),
+    StructField("era2", DoubleType(), True)
+])
+
 # ==============================================================================
 # [Transformation] 데이터 정제 함수 정의
 # ==============================================================================
 def clean_hitter_data(df):
-    print("🛠️ [DEBUG] 데이터 정제 작업 시작...")
-    
-    # 정수형 컬럼 정제: '-' 또는 결측값(Null)을 0으로 대체한 뒤 int 캐스팅
     target_cols = ["r", "h", "2b", "hr", "so", "gdp"]
     for c in target_cols:
         df = df.withColumn(c, when(col(c).isNull() | (col(c) == "-") | (trim(col(c)) == ""), 0).otherwise(col(c).cast("int")))
     
-    # 실수형 컬럼(타율 등) 정제: '-' 또는 결측값을 0.0으로 대체한 뒤 double 캐스팅
     avg_cols = ["avg1", "avg2"]
     for c in avg_cols:
         df = df.withColumn(c, when(col(c).isNull() | (col(c) == "-") | (trim(col(c)) == ""), 0.0).otherwise(col(c).cast("double")))
-        
-    print("✅ [DEBUG] 데이터 정제 작업 완료.")
     return df
 
-# ==============================================================================
-# [ETL 프로세스 실행]
-# ==============================================================================
-try:
-    # 1. 파일 존재 여부 먼저 확인
-    # 로컬 경로 및 컨테이너 경로 양쪽 다 유연하게 대처
-    alternative_path = f"/home/jovyan/work/players/hitter_stats_{target_month}.csv"
-    if not os.path.exists(csv_path):
-        if os.path.exists(alternative_path):
-            print(f"🔄 [DEBUG] 기본 경로에 파일이 없어 대체 경로를 사용합니다: {alternative_path}")
-            csv_path = alternative_path
-        else:
-            raise FileNotFoundError(f"❌ 수집된 CSV 파일을 찾을 수 없습니다. 경로를 확인해주세요. (시도한 경로: {csv_path}, {alternative_path})")
-
-    # 2. 데이터 읽기 (Extract)
-    print(f"📖 [DEBUG] CSV 파일에서 raw 데이터 로딩 중...")
-    raw_df = spark.read.option("header", "true").schema(hitter_schema).csv(csv_path)
+# [추가] 투수 데이터 정제 함수
+def clean_pitcher_data(df):
+    int_cols = ["h", "hr"]
+    for c in int_cols:
+        df = df.withColumn(c, when(col(c).isNull() | (col(c) == "-") | (trim(col(c)) == ""), 0).otherwise(col(c).cast("int")))
     
-    raw_count = raw_df.count()
-    print(f"📊 [DEBUG] 로드된 Raw 데이터 개수: {raw_count}개")
-    if raw_count == 0:
-        print("⚠️ [WARNING] 가져온 데이터가 0건입니다. 파일 내용을 확인해보세요.")
+    double_cols = ["era1", "era2"]
+    for c in double_cols:
+        df = df.withColumn(c, when(col(c).isNull() | (col(c) == "-") | (trim(col(c)) == ""), 0.0).otherwise(col(c).cast("double")))
+    return df
 
-    # 3. 데이터 정제 (Transform)
-    final_df = clean_hitter_data(raw_df)
-    
-    # 디버깅용: 정제 후 상위 5건 콘솔 출력
-    print("✨ [DEBUG] 정제 완료 데이터 (상위 5건):")
-    final_df.show(5, truncate=False)
-
-    # 4. DB 적재 (Load)
-    target_table = "hitter_stats"
+# [공통] DB 적재 Helper 함수
+def load_to_mysql(df, target_table):
     print(f"🔄 [DEBUG] MySQL 테이블 '{target_table}'에 데이터 적재 시작 (Mode: Overwrite)...")
-    
-    final_df.write \
+    df.write \
         .format("jdbc") \
         .option("url", jdbc_url) \
         .option("dbtable", target_table) \
@@ -148,15 +142,46 @@ try:
         .option("driver", db_properties["driver"]) \
         .mode("overwrite") \
         .save()
+    print(f"🎉 [DEBUG] '{target_table}' 테이블 적재 성공!")
+
+# ==============================================================================
+# [ETL 프로세스 실행]
+# ==============================================================================
+try:
+    # --------------------------------------------------------------------------
+    # 1. 타자(Hitter) ETL
+    # --------------------------------------------------------------------------
+    print("\n--- 🏏 [1/2] 타자 데이터 ETL 시작 ---")
+    if os.path.exists(hitter_csv_path):
+        print(f"📂 [DEBUG] 타자 CSV 로딩: {hitter_csv_path}")
+        hitter_raw = spark.read.option("header", "true").schema(hitter_schema).csv(hitter_csv_path)
+        print(f"📊 [DEBUG] 타자 Raw 데이터: {hitter_raw.count()}건")
         
-    print(f"🎉 [DEBUG] '{target_table}' 테이블에 데이터 적재 완료 성공!")
+        hitter_final = clean_hitter_data(hitter_raw)
+        hitter_final.show(3, truncate=False)
+        load_to_mysql(hitter_final, "hitter_stats")
+    else:
+        print(f"⚠️ [WARNING] 타자 파일이 존재하지 않아 스킵합니다: {hitter_csv_path}")
+
+    # --------------------------------------------------------------------------
+    # 2. 투수(Pitcher) ETL
+    # --------------------------------------------------------------------------
+    print("\n--- 🥎 [2/2] 투수 데이터 ETL 시작 ---")
+    if os.path.exists(pitcher_csv_path):
+        print(f"📂 [DEBUG] 투수 CSV 로딩: {pitcher_csv_path}")
+        pitcher_raw = spark.read.option("header", "true").schema(pitcher_schema).csv(pitcher_csv_path)
+        print(f"📊 [DEBUG] 투수 Raw 데이터: {pitcher_raw.count()}건")
+        
+        pitcher_final = clean_pitcher_data(pitcher_raw)
+        pitcher_final.show(3, truncate=False)
+        load_to_mysql(pitcher_final, "pitcher_stats")
+    else:
+        print(f"⚠️ [WARNING] 투수 파일이 존재하지 않아 스킵합니다: {pitcher_csv_path}")
 
 except Exception as e:
     print(f"❌ [DEBUG] ETL 작업 중 에러 발생: {e}")
-    # 에러 스택 트레이스 세부 출력을 위해 예외 객체를 그대로 출력
-    import traceback
     traceback.print_exc()
 
 finally:
-    print("🧹 [DEBUG] Spark Session을 중지하고 자원을 반납합니다.")
+    print("\n🧹 [DEBUG] Spark Session을 중지하고 자원을 반납합니다.")
     spark.stop()
