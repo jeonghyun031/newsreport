@@ -20,6 +20,7 @@ function App() {
   const KBO_TEAMS = ['KIA', '삼성', 'LG', '두산', 'SSG', 'KT', '한화', '롯데', 'NC', '키움'];
   const [selectedTeams, setSelectedTeams] = useState(['삼성', 'KIA']);
   const [emailInput, setEmailInput] = useState('');
+  const [appPasswordInput, setAppPasswordInput] = useState('');
   const [sendingEmail, setSendingEmail] = useState(false);
   const [subscribing, setSubscribing] = useState(false);
   const [emailResult, setEmailResult] = useState(null);
