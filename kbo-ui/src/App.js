@@ -388,12 +388,22 @@ function App() {
           let trimmed = line.trim();
           if (!trimmed) return <div key={idx} className="h-1" />;
 
-          // 모든 형태의 # 해시 기호 제거 (예: #1., #2., # 🔮 등)
-          if (trimmed.startsWith('#') || /^#\d/.test(trimmed)) {
-            const cleanHeader = trimmed.replace(/^#+\s*/, '').replace(/^#/, '').replace(/\*\*/g, '');
+          // # 메인 제목 (# 박준영 오늘의 야구 사주풀이)
+          if (trimmed.startsWith('# ')) {
+            const titleText = trimmed.replace(/^#\s*/, '').replace(/\*\*/g, '');
             return (
-              <h4 key={idx} className="text-sm md:text-base font-extrabold text-amber-950 border-b border-amber-300/60 pb-1 mt-4 mb-2 flex items-center">
-                {cleanHeader}
+              <h3 key={idx} className="text-base md:text-lg font-black text-amber-950 border-b-2 border-amber-400/80 pb-2 mb-3 mt-1">
+                {titleText}
+              </h3>
+            );
+          }
+
+          // ## 소제목 (## 1. 👁️ 오늘 선발의 운세 총평 등)
+          if (trimmed.startsWith('## ')) {
+            const subTitleText = trimmed.replace(/^##\s*/, '').replace(/\*\*/g, '');
+            return (
+              <h4 key={idx} className="text-sm md:text-base font-extrabold text-amber-900 border-b border-amber-300/60 pb-1 mt-4 mb-2 flex items-center">
+                {subTitleText}
               </h4>
             );
           }
@@ -843,24 +853,26 @@ function App() {
                   />
                 </div>
                 <div className="space-y-1.5">
-                  <label className="text-xs font-bold text-slate-700 block flex justify-between">
+                  <label className="text-xs font-bold text-slate-700 flex justify-between items-center">
                     <span>3. Gmail 앱 비밀번호 (16자리)</span>
-                    <span className="text-[10px] text-amber-800 font-semibold">정기 구독 시 필수</span>
+                    <span className="text-[11px] bg-amber-100 text-amber-900 px-2 py-0.5 rounded font-extrabold border border-amber-300">
+                      🔒 정기 구독 등록 시 user_info DB 필수 저장
+                    </span>
                   </label>
                   <input
                     type="password"
                     value={appPasswordInput}
                     onChange={(e) => setAppPasswordInput(e.target.value)}
                     placeholder="16자리 앱 비밀번호 (예: fdstpjnhynfzdlrj)"
-                    className="w-full px-4 py-2.5 border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-emerald-500 shadow-sm"
+                    className="w-full px-4 py-2.5 border border-amber-300 bg-amber-50/20 rounded-lg text-sm focus:outline-none focus:border-emerald-500 shadow-sm font-semibold"
                   />
                 </div>
               </div>
 
               {/* 발송 & 정기 구독 등록 버튼 */}
               <div className="flex flex-col sm:flex-row justify-between items-center gap-3 pt-2">
-                <div className="text-[11px] text-slate-500 font-medium">
-                  💡 <b>보안 안내:</b> 구글 계정 ➔ 보안 ➔ 2단계 인증 ➔ <b>앱 비밀번호(16자리)</b>를 등록하시면 본인 계정으로 직접 수신됩니다.
+                <div className="text-[11px] text-slate-600 font-medium bg-slate-50 p-2 rounded-lg border border-slate-200">
+                  💡 <b>보안 및 구독 안내:</b> 구글 계정 ➔ 보안 ➔ 2단계 인증 ➔ <b>앱 비밀번호(16자리)</b>를 등록하시면 해당 이메일/비밀번호가 DB(`user_info`)에 안전하게 기록되어 정기 브리핑이 발송됩니다.
                 </div>
                 <div className="flex space-x-2 w-full sm:w-auto justify-end">
                   <button
