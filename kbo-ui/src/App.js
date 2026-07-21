@@ -854,17 +854,14 @@ function App() {
                   />
                 </div>
                 <div className="space-y-1.5">
-                  <label className="text-xs font-bold text-slate-700 flex justify-between items-center">
-                    <span>3. Gmail 앱 비밀번호 (16자리)</span>
-                    <span className="text-[11px] bg-amber-100 text-amber-900 px-2 py-0.5 rounded font-extrabold border border-amber-300">
-                      🔒 정기 구독 등록 시 user_info DB 필수 저장
-                    </span>
+                  <label className="text-xs font-bold text-slate-700 block">
+                    3. Gmail 앱 비밀번호 (16자리)
                   </label>
                   <input
                     type="password"
                     value={appPasswordInput}
                     onChange={(e) => setAppPasswordInput(e.target.value)}
-                    placeholder="16자리 앱 비밀번호 (예: fdstpjnhynfzdlrj)"
+                    placeholder="16자리 앱 비밀번호 (예: abcdefghijklmnop)"
                     className="w-full px-4 py-2.5 border border-amber-300 bg-amber-50/20 rounded-lg text-sm focus:outline-none focus:border-emerald-500 shadow-sm font-semibold"
                   />
                 </div>
