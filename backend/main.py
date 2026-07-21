@@ -315,7 +315,7 @@ def send_smtp_email(to_email: str, subject: str, html_content: str):
         html_part = MIMEText(html_content, "html", "utf-8")
         msg.attach(html_part)
 
-        with smtplib.SMTP(smtp_server, smtp_port) as server:
+        with smtplib.SMTP(smtp_server, smtp_port, timeout=10) as server:
             server.starttls()
             server.login(smtp_user, smtp_password)
             server.sendmail(smtp_user, to_email, msg.as_string())
