@@ -287,7 +287,7 @@ def run_baseball_ranking_crawler(**context):
             os.makedirs(SHARED_RAW_DIR)
             
         save_path = os.path.join(SHARED_RAW_DIR, f"raw_baseball_ranking_{news_date}.csv")
-        df.to_csv(save_path, index=False, encoding="utf-8-sig")
+        df.to_csv(save_path, index=False, encoding="utf-8-sig", header=False)
         len_df = len(news_list)
         
         context["ti"].xcom_push(key="crawl_count", value=len_df)
@@ -438,4 +438,4 @@ with DAG(
     )
 
     # [수집 흐름 제어]
-    [crawl_task, crawl_ranking] >> crawl_success_task >> spark_transform_task >> spark_success_task
+    crawl_task >> crawl_ranking >> crawl_success_task >> spark_transform_task >> spark_success_task

@@ -41,7 +41,7 @@ with DAG(
     description='매일 아침 8시 KBO 관심 구단 정기 구독 이메일 자동 발송',
     schedule_interval='0 8 * * *',  # 매일 오전 08:00 정각 스케줄
     catchup=False,
-    is_paused_upon_creation=False,
+    # is_paused_upon_creation=False,
     tags=['kbo', 'email', 'briefing', 'daily']
 ) as dag:
 

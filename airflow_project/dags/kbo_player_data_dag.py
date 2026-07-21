@@ -294,7 +294,7 @@ with DAG(
     default_args=default_args,
     schedule_interval='0 15 * * *',
     catchup=False,
-    is_paused_upon_creation=False,
+    # is_paused_upon_creation=False,
     tags=['crawling', 'kbo', 'player_data']
 ) as dag:
 
