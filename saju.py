@@ -47,15 +47,64 @@ client = OpenAI(
     api_key=API_KEY,
 )
 
-# =========================================================================
-# [1] DB 동적 데이터 수집 및 헬퍼 모듈
-# =========================================================================
+def extract_clean_korean_saju(raw_text):
+    """
+    Qwen LLM 응답 중 영문 사고 과정(Thinking Process 또는 **Role:** 등)이 포함된 경우,
+    영문 텍스트를 완벽히 필터링하고 100% 한글 사주풀이 본문만을 깨끗하게 정제하여 반환합니다.
+    """
+    if not raw_text or not isinstance(raw_text, str):
+        return ""
+    text = raw_text.strip()
+    import re
+
+    # 1. 한글 마크다운 제목(# 🔮 또는 ## 1. 👁️ 또는 # [선수명] 등)의 시작 지점 탐색
+    match = re.search(r'(#\s*🔮|#\s*\[|##\s*1\.|##\s*👁️|#\s*오늘|#\s*선발|\[도사의 조언\])', text)
+    if match:
+        return text[match.start():].strip()
+
+    # 2. 첫 한글이 나타나는 행부터 시작하도록 추출
+    first_kr = re.search(r'[\uac00-\ud7a3]', text)
+    if first_kr:
+        line_start = text.rfind('\n', 0, first_kr.start())
+        return text[line_start + 1:].strip() if line_start != -1 else text[first_kr.start():].strip()
+
+    return text
+
+def sanitize_all_hashes(text):
+    """
+    텍스트 내의 모든 #1., #2., # 🔮 등 # 및 해시 기호를 100% 깔끔하게 제거합니다.
+    """
+    if not text or not isinstance(text, str):
+        return ""
+    import re
+    lines = text.strip().split('\n')
+    cleaned_lines = []
+    for line in lines:
+        cleaned_line = re.sub(r'^\s*#+\s*', '', line)
+        cleaned_lines.append(cleaned_line)
+    return '\n'.join(cleaned_lines).strip()
+
+# 주요 선발 투수 생년월일 매핑 딕셔너리 (DB 미적재 시 안전 폴백용)
+_FALLBACK_BIRTHDAYS = {
+    "박준영": "2002년 06월 03일",
+    "황동하": "2002년 07월 30일",
+    "원종해": "2005년 04월 09일",
+    "장현식": "1995년 02월 24일",
+    "벤자민": "1993년 07월 26일",
+    "오원석": "2001년 04월 23일",
+    "타케다": "1993년 04월 03일",
+    "비슬리": "1995년 11월 20일",
+    "최원태": "1997년 01월 07일",
+    "배동현": "1998년 03월 16일"
+}
+
 
 def fetch_pitcher_birthday(pitcher_name, conn=None):
     """
     total_db.pitcher_stats 및 kbo_schedule 테이블에서 선수의 생년월일(birth)을 100% 동적으로 조회합니다.
+    DB에 정보가 없는 경우 _FALLBACK_BIRTHDAYS 매핑 사전에서 로드합니다.
     """
-    birthday = ""
+    birthday = _FALLBACK_BIRTHDAYS.get(pitcher_name, "")
     db_conn = conn
     should_close = False
     if not db_conn:
@@ -63,7 +112,7 @@ def fetch_pitcher_birthday(pitcher_name, conn=None):
             db_conn = get_db_connection()
             should_close = True
         except Exception:
-            return birthday
+            return birthday or "알 수 없음 (도사의 혜안으로 사주 추출)"
 
     try:
         with db_conn.cursor() as cur:
@@ -96,12 +145,12 @@ def fetch_pitcher_birthday(pitcher_name, conn=None):
                     birthday = str(row2["birthday"]).strip()
                     print(f"📅 DB kbo_schedule에서 '{pitcher_name}' 생일 로드: {birthday}")
     except Exception as e:
-        print(f"⚠️ DB 생일 동적 조회 스킵 (폴백 자율 추출 적용): {e}")
+        print(f"⚠️ DB 생일 동적 조회 스킵 (폴백 매핑 활용): {e}")
 
     if should_close and db_conn:
         db_conn.close()
 
-    return birthday
+    return birthday or "알 수 없음 (도사의 혜안으로 사주 추출)"
 
 
 def get_db_connection():
@@ -500,42 +549,116 @@ def get_baseball_saju(pitcher_name, opponent_team="상대팀", stadium_name="야
 
 {user_prompt}"""
 
-    # 투수별 DB 팩트 기반 풍부한 동적 사주풀이 조립
+    # 투수 오행 성향(화/금/토/수/목) 및 시드(name_seed) 기반 1~4번 문단 100% 독창적 다양화 믹서
+    elem = stats.get("element", "")
+    stuff = stats["stuff"]
+    loc = stats["location"]
+    crisis = stats["crisis_mgmt"]
+    opp = stats.get("opponent", "상대팀")
+    my_t = stats["team"]
     raw_summary = stats.get("raw_stats_summary", "최신 기록 수집 완료")
-    dynamic_saju_result = f"""# 🔮 [{pitcher_name}] 오늘의 야구 사주풀이
 
-## 1. 👁️ 오늘 선발의 운세 총평
-{game_date} 마운드에 오르는 **{stats['team']}**의 **{pitcher_name}** 투수(생년월일: {birthday})는 **{stats.get('element', '불꽃 구위')}**의 기운이 강렬하게 감도는 날이로다. 상대인 **{stats.get('opponent', '상대팀')}** 타선의 맹렬한 공격에 맞서 마운드 위 멘탈 조율과 수비진의 지원이 오늘 승패의 핵심 분수령이 되리라.
+    name_seed = sum(ord(c) for c in pitcher_name) + stuff * 3 + loc * 7
+    idx1 = name_seed % 3
+    idx3 = (name_seed + 1) % 3
+    idx4 = (name_seed + 2) % 3
 
-## 2. ☯️ 데이터로 보는 오행의 기운 (KBO Talent 해석)
-*   **K-Stuff+ (구위 {stats['stuff']}):** 마운드를 타오르게 하는 불꽃 구위의 기세 (100 기준).
-*   **K-Location+ (제구 {stats['location']}):** 타자 코너 구석을 예리하게 찌르는 제구력.
-*   **FCB.OSWC (위기 담력 {stats['crisis_mgmt']}):** 위기 상황 주자 누상 시 흔들리지 않는 태산의 담력.
-*   *📊 DB 실시간 기운 지표:* `{raw_summary}`
+    if "화" in elem or (stuff >= loc and stuff >= crisis):
+        sec1_pool = [
+            f"{game_date} 마운드에 오르는 {my_t}의 {pitcher_name} 투수(생년월일: {birthday})는 불꽃처럼 타오르는 화(火)의 불꽃 구위(Stuff+ {stuff})가 온 마운드를 기선 제압하는 격이로다. 타자의 헛스윙을 유도하는 직구 묵직함이 돋보이니, {opp} 타선을 힘으로 눌러버릴 절호의 일진이로다!",
+            f"{game_date} {my_t} 마운드의 열혈 투수 {pitcher_name} (생년월일: {birthday})는 맹렬한 적염(赤焰)의 기운을 품었도다! K-Stuff+ {stuff}의 강렬한 패스트볼 구위로 {opp} 타선의 초반 기세를 단칼에 꺾어 놓을 마운드의 화신이 되리라.",
+            f"오늘 {game_date} {my_t}의 선발 {pitcher_name} 투수(생년월일: {birthday})는 솟구치는 화염과 같은 화(火)의 기백(Stuff+ {stuff})을 자랑하느니! 강한 볼끝으로 {opp} 득점권 타자들을 압도할 용맹한 기세가 돋보이느니라."
+        ]
+        sec3_pool = [
+            f"**{opp}** 타선과의 승부에서 초구 패스트볼 과신으로 인한 피홈런의 액운을 주의하라. 2스트라이크 이후 하이 패스트볼로 삼진을 낚아채되, 제구가 들뜰 때 호흡을 가다듬는 템포 조율이 필수니라.",
+            f"**{opp}** 득점권 찬스 시 마운드 위 과도한 힘이 들어가는 것을 경계하라. 제구가 날릴 수 있으니 2구째 변화구 조합으로 타자의 타격 템포를 흩뜨려 놓아야 액운을 면하리라.",
+            f"**{opp}** 상위 타선과의 승부에서 직구 위주 피칭만 고집하는 맹목을 주의하라. 체인지업과 인코스 승부를 적절히 조율하는 것이 액운을 물리치는 비법이니라."
+        ]
+        sec4_pool = [
+            f"{my_t} 팬들은 {pitcher_name} 투수가 포수 미트에 묵직한 공을 꽂아 넣을 때마다 뜨거운 함성으로 화(火)의 불꽃 기운을 북돋아 주어라!",
+            f"{my_t} 팬들은 {pitcher_name} 투수가 150km대 속구를 꽂아 넣을 때 기립 박수를 보내어 상대 타자들의 사기를 완전히 꺾어 놓으라!",
+            f"{my_t} 팬들의 뜨거운 응원 열기가 {pitcher_name} 투수의 명리 오행 균형을 완성할 것이니 붉은 응원 기운을 모아라!"
+        ]
+        sec1, sec3, sec4 = sec1_pool[idx1], sec3_pool[idx3], sec4_pool[idx4]
 
-## 3. ⚠️ 오늘 피해야 할 액운과 상극 타자 (기사/데이터 기반)
-**{stats.get('opponent', '상대팀')}** 타선의 득점권 찬스에서 초구 스트라이크 비율을 높여 상대의 기선을 제압해야 하느니, 초반 방심은 액운을 부를 수 있음을 명심하라.
+    elif "금" in elem or (loc >= stuff and loc >= crisis):
+        sec1_pool = [
+            f"{game_date} 마운드에 오르는 {my_t}의 {pitcher_name} 투수(생년월일: {birthday})는 서리 내린 칼날처럼 예리한 금(金)의 칼날 제구(Location+ {loc})가 인상적인 운세로다. 스트라이크존 구석구석을 찌르는 정밀함으로 {opp} 타자들의 방망이를 무력화시킬 혜안을 지녔도다!",
+            f"{game_date} {my_t}의 제구 마스터 {pitcher_name} (생년월일: {birthday})는 차가운 금속과 같은 냉철한 금(金)의 기운(Location+ {loc})을 발산하도다! {opp} 타선의 허점을 정확히 파고드는 정밀한 보더라인 피칭이 일품이로다.",
+            f"오늘 {game_date} {my_t} 선발 {pitcher_name} 투수(생년월일: {birthday})는 칼끝처럼 가파른 금(金)의 서리 제구(Location+ {loc})를 뽐내느니! 볼카운트 싸움을 유리하게 끌고 가며 {opp} 타자들을 요리할 명검의 기세로다."
+        ]
+        sec3_pool = [
+            f"{opp} 중심 타선의 집요한 커트와 풀카운트 승부에서 제구 난조로 인한 사사구 허용의 액운이 있도다. 코너워크 피칭 시 몸쪽에 과감하게 찌르는 투구가 액운을 뚫는 열쇠가 되리라.",
+            f"{opp} 타선과의 3회 세 번째 타순 회전 시 코너 피칭이 과하게 엄격해져 보더라인 판정 불이익의 액운을 유의하라. 존 중앙으로 과감히 스트라이크를 빼앗는 담력이 필요하니라.",
+            f"{opp} 주자 출루 시 견제와 정밀 피칭에 시간이 지체되어 피치클락 경고의 액운이 있도다. 포수 사인을 신속히 결정하여 투구 템포를 경쾌하게 유지하라."
+        ]
+        sec4_pool = [
+            f"{my_t} 팬들은 {pitcher_name} 투수가 구석을 찌르는 스트라이크를 빼앗을 때 마운드의 정적을 깨는 칭찬 박수로 금(金)의 예리함을 응원하라!",
+            f"{my_t} 팬들은 {pitcher_name} 투수의 환상적인 바깥쪽 루킹 삼진 시 한뜻으로 함성을 질러 금(金)의 혜안 기운을 가득 채워라!",
+            f"{my_t} 팬들의 냉철하고 집중된 응원이 {pitcher_name} 투수의 제구 정확도를 정점으로 끌어올릴 것이니 큰 박수를 보내라!"
+        ]
+        sec1, sec3, sec4 = sec1_pool[idx1], sec3_pool[idx3], sec4_pool[idx4]
 
-## 4. 🧧 팬들을 위한 행운의 관전 비책
-**{stats['team']}** 팬들은 마운드 위 **{pitcher_name}** 투수의 구위가 꺾이지 않도록 뜨거운 응원의 기운을 보내어 마운드의 오행 균형을 완성하라."""
+    else:
+        sec1_pool = [
+            f"{game_date} 마운드에 오르는 {my_t}의 {pitcher_name} 투수(생년월일: {birthday})는 태산처럼 흔들리지 않는 토(土)의 마운드 담력(Crisis_Mgmt {crisis})이 빛발하는 운세로다. 득점권 위기 상황일수록 더욱 차분하게 맞서 {opp} 타선의 범타를 유도해낼 태산의 기세를 지녔도다!",
+            f"{game_date} {my_t}의 수호신 {pitcher_name} (생년월일: {birthday})는 온화하고 굳건한 토(土)의 멘탈 기운(Crisis_Mgmt {crisis})을 품었느니! 위기 누상 시에도 표정 변화 없이 {opp} 타자들을 땅볼로 솎아낼 태산의 운세로다.",
+            f"오늘 {game_date} {my_t} 선발 {pitcher_name} 투수(생년월일: {birthday})는 마운드를 지키는 웅장한 대지, 토(土)의 담력(Crisis_Mgmt {crisis})을 과시하느니! 난관에 부딪힐수록 더 강해지는 철벽의 기세로 {opp} 타선을 잠재우리라."
+        ]
+        sec3_pool = [
+            f"{opp} 타자 누상 출루 시 1루 커버 플레이 및 수비 실책으로 인한 예기치 못한 실점 액운을 주의하라. 땅볼 유도 피칭 시 내야진과의 탄탄한 조화가 오늘 승패를 결정지으리라.",
+            f"{opp} 득점권 위기 시 야수들의 포구 실책이나 불운한 텍사스 안타의 액운이 뒤따를 수 있도다. 흔들리지 말고 평정심을 유지하며 내야 땅볼을 차분히 유도하라.",
+            f"{opp} 중심 타선의 기습 번트나 기습 주루에 당황할 액운이 있도다. 마운드 주변 수비 백업을 철저히 하고 투구 전 야수 위치를 재차 확인하라."
+        ]
+        sec4_pool = [
+            f"{my_t} 팬들은 위기 상황 주자 누상 시 {pitcher_name} 투수가 멘탈을 가다듬을 수 있도록 기립박수로 토(土)의 담력을 지탱해 주어라!",
+            f"{my_t} 팬들은 {pitcher_name} 투수가 병살타를 유도해 이닝을 끝낼 때마다 벅찬 함성으로 토(土)의 대지 기운을 보태어라!",
+            f"{my_t} 팬들의 굳건한 믿음과 박수가 {pitcher_name} 투수에게 태산과 같은 피칭의 안정감을 선사할 것이니 뜨겁게 호응하라!"
+        ]
+        sec1, sec3, sec4 = sec1_pool[idx1], sec3_pool[idx3], sec4_pool[idx4]
 
-    # 1. OpenAI SDK client를 통한 서비스
+    dynamic_saju_result = f"""🔮 [{pitcher_name}] 오늘의 야구 사주풀이
+
+1. 👁️ 오늘 선발의 운세 총평
+{sec1}
+
+2. ☯️ 데이터로 보는 오행의 기운 (KBO Talent 해석)
+*   K-Stuff+ (구위 {stuff}): 마운드를 타오르게 하는 불꽃 구위의 기세 (100 기준).
+*   K-Location+ (제구 {loc}): 타자 코너 구석을 예리하게 찌르는 제구력.
+*   FCB.OSWC (위기 담력 {crisis}): 위기 상황 주자 누상 시 흔들리지 않는 태산의 담력.
+*   📊 DB 실시간 기운 지표: `{raw_summary}`
+
+3. ⚠️ 오늘 피해야 할 액운과 상극 타자 (기사/데이터 기반)
+{sec3}
+
+4. 🧧 팬들을 위한 행운의 관전 비책
+{sec4}"""
+
+
+    # 1. OpenAI SDK client를 통한 Qwen 3.5 35B 딥러닝 LLM 직접 추론
     try:
         response = client.chat.completions.create(
             model="Qwen/Qwen3.5-35B-A3B-FP8",
-            messages=[{"role": "user", "content": full_prompt}],
-            max_tokens=650,
+            messages=[
+                {"role": "system", "content": "너는 KBO 야구 전문 명리 사주 도사이다. #이나 ## 같은 마크다운 해시 특수기호를 절대로 쓰지 말고, 곧바로 '1. 오늘 선발의 운세 총평' 형태의 깔끔한 한글 텍스트로만 100% 작성하라."},
+                {"role": "user", "content": full_prompt}
+            ],
+            max_tokens=1500,
             temperature=0.7,
-            timeout=30
+            timeout=35
         )
         if response.choices and response.choices[0].message:
-            content = response.choices[0].message.content
-            if content and content.strip():
-                return content.strip()
+            msg_obj = response.choices[0].message
+            raw_content = getattr(msg_obj, "content", None)
+            if raw_content and isinstance(raw_content, str) and raw_content.strip():
+                clean_kr = extract_clean_korean_saju(raw_content)
+                if clean_kr:
+                    print(f"🤖 [Qwen 3.5 35B 딥러닝 LLM 직접 생성 완료] 한국어 본문 길이: {len(clean_kr)}자")
+                    return sanitize_all_hashes(clean_kr)
     except Exception as sdk_err:
         print(f"⚠️ OpenAI SDK 호출 예외: {sdk_err}")
 
-    # 2. REST API 폴백
+    # 2. REST API 폴백 딥러닝 LLM 호출
     url = "https://code.cu.ac.kr/llm/v1/chat/completions"
     headers = {
         "Authorization": f"Bearer {API_KEY}",
@@ -545,27 +668,31 @@ def get_baseball_saju(pitcher_name, opponent_team="상대팀", stadium_name="야
     data = {
         "model": "Qwen/Qwen3.5-35B-A3B-FP8",
         "messages": [
+            {"role": "system", "content": "너는 KBO 야구 전문 명리 사주 도사이다. #이나 ## 같은 특수기호를 절대로 쓰지 말고, 곧바로 '1. 오늘 선발의 운세 총평' 형태의 깔끔한 한글 텍스트로만 100% 작성하라."},
             {"role": "user", "content": full_prompt}
         ],
         "stream": False,
-        "max_tokens": 650,
+        "max_tokens": 1500,
         "temperature": 0.7
     }
     
     try:
-        resp = requests.post(url, headers=headers, json=data, timeout=30)
+        resp = requests.post(url, headers=headers, json=data, timeout=35)
         resp.raise_for_status()
         resp_data = resp.json()
         choices = resp_data.get("choices", [])
         if choices:
             msg_obj = choices[0].get("message", {})
-            content = msg_obj.get("content") or choices[0].get("text")
-            if content and content.strip():
-                return content.strip()
-        return dynamic_saju_result
+            raw_content = msg_obj.get("content")
+            if raw_content and isinstance(raw_content, str) and raw_content.strip():
+                clean_kr = extract_clean_korean_saju(raw_content)
+                if clean_kr:
+                    print(f"🤖 [REST Qwen 3.5 35B 딥러닝 LLM 직접 생성 완료] 한국어 본문 길이: {len(clean_kr)}자")
+                    return sanitize_all_hashes(clean_kr)
+        return sanitize_all_hashes(dynamic_saju_result)
     except Exception as e:
         print(f"⚠️ REST API 호출 예외: {e}")
-        return dynamic_saju_result
+        return sanitize_all_hashes(dynamic_saju_result)
 
 if __name__ == "__main__":
     # 단독 테스트를 위해 결과를 콘솔에 출력합니다.

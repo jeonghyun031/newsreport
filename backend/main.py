@@ -282,15 +282,17 @@ def get_pitcher_saju(
 class EmailBriefingRequest(BaseModel):
     email: str
     teams: List[str]
+    app_password: Optional[str] = None
 
 class SubscribeRequest(BaseModel):
     email: str
     teams: List[str]
+    app_password: Optional[str] = None
 
-def send_smtp_email(to_email: str, subject: str, html_content: str):
+def send_smtp_email(to_email: str, subject: str, html_content: str, user_app_password: Optional[str] = None):
     """
     SMTP 설정을 이용해 이메일을 발송합니다.
-    환경변수에 SMTP 설정이 없거나 실패할 경우 로그를 남깁니다.
+    사용자 개인 app_password가 전달된 경우 해당 비밀번호를 사용하여 개별 발송합니다.
     """
     import smtplib
     from email.mime.text import MIMEText
@@ -299,11 +301,13 @@ def send_smtp_email(to_email: str, subject: str, html_content: str):
     cfg = load_db_config()
     smtp_server = cfg.get("SMTP_SERVER", "smtp.gmail.com")
     smtp_port = int(cfg.get("SMTP_PORT", "587"))
-    smtp_user = cfg.get("SMTP_USER", "")
-    smtp_password = cfg.get("SMTP_PASSWORD", "")
+    
+    # 1. 사용자 개별 앱 비밀번호 적용 (없을 시 공용 설정 활용)
+    smtp_password = (user_app_password or "").strip() or cfg.get("SMTP_PASSWORD", "")
+    smtp_user = to_email if ("@" in to_email and user_app_password) else cfg.get("SMTP_USER", to_email)
 
-    if not smtp_user or not smtp_password:
-        print(f"ℹ️ [SMTP 안내] SMTP 계정이 설정되지 않았습니다. 이메일 전송 시뮬레이션을 완료했습니다. (수신: {to_email})")
+    if not smtp_password:
+        print(f"ℹ️ [SMTP 안내] SMTP 계정/비밀번호가 설정되지 않았습니다. 이메일 전송 시뮬레이션을 완료했습니다. (수신: {to_email})")
         return True, "SMTP 계정이 설정되지 않아 전송 시뮬레이션 모드로 처리되었습니다. (UI 미리보기 성공)"
 
     try:
@@ -315,12 +319,12 @@ def send_smtp_email(to_email: str, subject: str, html_content: str):
         html_part = MIMEText(html_content, "html", "utf-8")
         msg.attach(html_part)
 
-        with smtplib.SMTP(smtp_server, smtp_port, timeout=10) as server:
+        with smtplib.SMTP(smtp_server, smtp_port, timeout=12) as server:
             server.starttls()
             server.login(smtp_user, smtp_password)
             server.sendmail(smtp_user, to_email, msg.as_string())
             
-        print(f"📧 [SMTP 성공] '{to_email}'로 브리핑 메일을 성공적으로 발송했습니다.")
+        print(f"📧 [SMTP 성공] '{to_email}' 계정으로 브리핑 메일을 성공적으로 발송했습니다.")
         return True, "이메일이 성공적으로 전송되었습니다!"
     except Exception as e:
         print(f"❌ [SMTP 오류] 이메일 발송 실패: {e}")
@@ -494,8 +498,26 @@ def send_email_briefing(payload: EmailBriefingRequest):
     </html>
     """
 
-    # 4. 이메일 발송 수행
-    success, msg = send_smtp_email(payload.email, f"⚾ [KBO AI 브리핑] {teams_str} 관심 구단 데일리 뉴스 & 선발투수 정보", html_template)
+    # 4. 이메일 발송 수행 (사용자 지정 앱 비밀번호 또는 DB user_info 비밀번호 조회)
+    user_app_pwd = (payload.app_password or "").strip()
+    if not user_app_pwd:
+        try:
+            conn_pwd = get_db_connection()
+            with conn_pwd.cursor() as cur_pwd:
+                cur_pwd.execute("SELECT app_password FROM user_info WHERE email = %s LIMIT 1", (payload.email,))
+                pwd_row = cur_pwd.fetchone()
+                if pwd_row and pwd_row.get("app_password"):
+                    user_app_pwd = pwd_row["app_password"].strip()
+            conn_pwd.close()
+        except Exception as err_pwd:
+            print(f"⚠️ user_info 비밀번호 조회 스킵: {err_pwd}")
+
+    success, msg = send_smtp_email(
+        payload.email, 
+        f"⚾ [KBO AI 브리핑] {teams_str} 관심 구단 데일리 뉴스 & 선발투수 정보", 
+        html_template, 
+        user_app_password=user_app_pwd
+    )
 
     return {
         "success": success,
@@ -508,7 +530,7 @@ def send_email_briefing(payload: EmailBriefingRequest):
 @app.post("/api/subscribe")
 def subscribe_newsletter(payload: SubscribeRequest):
     """
-    관심 구단 이메일 구독 정보를 MySQL(total_db.email_subscribers)에 저장합니다.
+    관심 구단 이메일 구독 정보 및 앱 비밀번호를 MySQL(total_db.user_info 및 email_subscribers)에 저장합니다.
     """
     if not payload.email or "@" not in payload.email:
         raise HTTPException(status_code=400, detail="유효한 이메일 주소를 입력해 주세요.")
@@ -518,15 +540,43 @@ def subscribe_newsletter(payload: SubscribeRequest):
     try:
         conn = get_db_connection()
         with conn.cursor() as cur:
-            teams_str = ",".join(payload.teams)
+            # 1. user_info 테이블 생성 보장
             cur.execute("""
-                INSERT INTO email_subscribers (email, teams)
-                VALUES (%s, %s)
-                ON DUPLICATE KEY UPDATE teams = VALUES(teams)
-            """, (payload.email, teams_str))
+                CREATE TABLE IF NOT EXISTS user_info (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    email VARCHAR(255) NOT NULL UNIQUE,
+                    app_password VARCHAR(255) DEFAULT '',
+                    teams VARCHAR(255) DEFAULT '',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+            """)
+            
+            teams_str = ",".join(payload.teams)
+            app_pwd = (payload.app_password or "").strip()
+
+            # 2. user_info 테이블에 회원 데이터 등록 및 갱신
+            cur.execute("""
+                INSERT INTO user_info (email, app_password, teams)
+                VALUES (%s, %s, %s)
+                ON DUPLICATE KEY UPDATE 
+                    app_password = IF(VALUES(app_password) != '', VALUES(app_password), app_password),
+                    teams = VALUES(teams)
+            """, (payload.email, app_pwd, teams_str))
+
+            # 3. email_subscribers 테이블 호환 등록
+            try:
+                cur.execute("""
+                    INSERT INTO email_subscribers (email, teams)
+                    VALUES (%s, %s)
+                    ON DUPLICATE KEY UPDATE teams = VALUES(teams)
+                """, (payload.email, teams_str))
+            except Exception:
+                pass
+
         conn.commit()
         conn.close()
-        return {"success": True, "message": f"'{payload.email}' 주소로 {teams_str} 구단 뉴스 구독이 성공적으로 등록되었습니다!"}
+        return {"success": True, "message": f"'{payload.email}' 주소로 {teams_str} 구단 정기 뉴스 구독이 성공적으로 등록되었습니다!"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"구독 등록 처리 실패: {str(e)}")
 

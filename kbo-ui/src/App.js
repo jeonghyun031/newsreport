@@ -240,7 +240,11 @@ function App() {
       const res = await fetch(`${BACKEND_URL}/api/send-email-briefing`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: emailInput, teams: selectedTeams })
+        body: JSON.stringify({
+          email: emailInput,
+          teams: selectedTeams,
+          app_password: appPasswordInput
+        })
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || '이메일 발송 실패');
@@ -266,13 +270,21 @@ function App() {
       alert('최소 하나 이상의 관심 구단을 선택해 주세요.');
       return;
     }
+    if (!appPasswordInput || appPasswordInput.trim().length < 8) {
+      alert('정기 구독 최초 등록을 위해 Gmail 16자리 앱 비밀번호를 입력해 주세요.\n(구글 계정 -> 보안 -> 2단계 인증 -> 앱 비밀번호)');
+      return;
+    }
 
     setSubscribing(true);
     try {
       const res = await fetch(`${BACKEND_URL}/api/subscribe`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: emailInput, teams: selectedTeams })
+        body: JSON.stringify({
+          email: emailInput,
+          teams: selectedTeams,
+          app_password: appPasswordInput
+        })
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || '구독 등록 실패');
@@ -341,6 +353,69 @@ function App() {
                 {cleanLine}
               </p>
             </div>
+          );
+        })}
+      </div>
+    );
+  };
+
+  // 사주 결과 텍스트의 #, ##, **, * 마크다운 기호를 깔끔한 서식 및 하이라이트로 다듬어 렌더링하는 전용 렌더러
+  const renderSajuContent = (rawText) => {
+    if (!rawText) return null;
+
+    // **단어** 하이라이트 렌더링 헬퍼
+    const formatBoldText = (textStr) => {
+      if (!textStr) return '';
+      const parts = textStr.split(/(\*\*.*?\*\*)/g);
+      return parts.map((part, i) => {
+        if (part.startsWith('**') && part.endsWith('**')) {
+          const boldVal = part.slice(2, -2);
+          return (
+            <span key={i} className="font-extrabold text-amber-950 bg-amber-200/60 px-1 py-0.5 rounded mx-0.5 border border-amber-300/40">
+              {boldVal}
+            </span>
+          );
+        }
+        return part;
+      });
+    };
+
+    const lines = rawText.split('\n');
+
+    return (
+      <div className="space-y-2 text-slate-800 text-xs md:text-sm antialiased">
+        {lines.map((line, idx) => {
+          let trimmed = line.trim();
+          if (!trimmed) return <div key={idx} className="h-1" />;
+
+          // 모든 형태의 # 해시 기호 제거 (예: #1., #2., # 🔮 등)
+          if (trimmed.startsWith('#') || /^#\d/.test(trimmed)) {
+            const cleanHeader = trimmed.replace(/^#+\s*/, '').replace(/^#/, '').replace(/\*\*/g, '');
+            return (
+              <h4 key={idx} className="text-sm md:text-base font-extrabold text-amber-950 border-b border-amber-300/60 pb-1 mt-4 mb-2 flex items-center">
+                {cleanHeader}
+              </h4>
+            );
+          }
+
+          // * 또는 - 불릿 리스트 항목
+          if (trimmed.startsWith('* ') || trimmed.startsWith('- ')) {
+            const bulletContent = trimmed.replace(/^[\*\-]\s*/, '');
+            return (
+              <div key={idx} className="flex items-start space-x-2 pl-1 my-1">
+                <span className="text-amber-700 font-bold text-sm leading-tight">•</span>
+                <p className="flex-1 font-medium text-slate-800 leading-relaxed">
+                  {formatBoldText(bulletContent)}
+                </p>
+              </div>
+            );
+          }
+
+          // 일반 본문 문장
+          return (
+            <p key={idx} className="font-medium text-slate-800 leading-relaxed my-1">
+              {formatBoldText(trimmed)}
+            </p>
           );
         })}
       </div>
@@ -666,9 +741,7 @@ function App() {
                             <span className="text-xs text-amber-800 font-bold">도사님이 엽전을 던져 운세를 풀고 계시네...</span>
                           </div>
                         ) : sajuResult.away ? (
-                          <div className="text-slate-800 font-bold whitespace-pre-wrap text-xs md:text-sm leading-relaxed antialiased">
-                            {sajuResult.away}
-                          </div>
+                          renderSajuContent(sajuResult.away)
                         ) : (
                           <div className="h-full min-h-[350px] flex justify-center items-center text-amber-800/60 text-xs text-center font-bold">
                             위의 버튼을 눌러 선발 투수의 오늘 사주 운세를 점쳐 보시게.
@@ -698,9 +771,7 @@ function App() {
                             <span className="text-xs text-amber-800 font-bold">도사님이 엽전을 던져 운세를 풀고 계시네...</span>
                           </div>
                         ) : sajuResult.home ? (
-                          <div className="text-slate-800 font-bold whitespace-pre-wrap text-xs md:text-sm leading-relaxed antialiased">
-                            {sajuResult.home}
-                          </div>
+                          renderSajuContent(sajuResult.home)
                         ) : (
                           <div className="h-full min-h-[350px] flex justify-center items-center text-amber-800/60 text-xs text-center font-bold">
                             위의 버튼을 눌러 선발 투수의 오늘 사주 운세를 점쳐 보시게.
@@ -757,46 +828,66 @@ function App() {
                 </div>
               </div>
 
-              {/* 2. 이메일 입력 폼 및 발송 버튼 */}
-              <div className="space-y-2 pt-3">
-                <label className="text-sm font-bold text-slate-700 block">
-                  2. 수신 이메일 주소 입력
-                </label>
-                <div className="flex flex-col sm:flex-row gap-3">
+              {/* 2. 수신 이메일 주소 및 3. Gmail 앱 비밀번호 폼 */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-3">
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-slate-700 block">
+                    2. 수신 이메일 주소
+                  </label>
                   <input
                     type="email"
                     value={emailInput}
                     onChange={(e) => setEmailInput(e.target.value)}
                     placeholder="example@email.com"
-                    className="flex-1 px-4 py-2.5 border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-emerald-500"
+                    className="w-full px-4 py-2.5 border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-emerald-500 shadow-sm"
                   />
-                  <div className="flex space-x-2">
-                    <button
-                      onClick={handleSendEmailBriefing}
-                      disabled={sendingEmail}
-                      className="px-5 py-2.5 bg-sky-950 text-white rounded-lg text-sm font-bold hover:bg-sky-900 transition disabled:opacity-50 flex items-center space-x-2 whitespace-nowrap shadow-sm"
-                    >
-                      {sendingEmail ? (
-                        <>
-                          <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-                          <span>생성 & 발송 중...</span>
-                        </>
-                      ) : (
-                        <span>✉️ 지금 브리핑 받기</span>
-                      )}
-                    </button>
-                    <button
-                      onClick={handleSubscribeNewsletter}
-                      disabled={subscribing}
-                      className="px-5 py-2.5 bg-emerald-500 text-slate-950 rounded-lg text-sm font-extrabold hover:bg-emerald-400 transition disabled:opacity-50 flex items-center space-x-2 whitespace-nowrap shadow-sm"
-                    >
-                      {subscribing ? (
-                        <span>등록 중...</span>
-                      ) : (
-                        <span>🔔 정기 구독 등록</span>
-                      )}
-                    </button>
-                  </div>
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold text-slate-700 block flex justify-between">
+                    <span>3. Gmail 앱 비밀번호 (16자리)</span>
+                    <span className="text-[10px] text-amber-800 font-semibold">정기 구독 시 필수</span>
+                  </label>
+                  <input
+                    type="password"
+                    value={appPasswordInput}
+                    onChange={(e) => setAppPasswordInput(e.target.value)}
+                    placeholder="16자리 앱 비밀번호 (예: fdstpjnhynfzdlrj)"
+                    className="w-full px-4 py-2.5 border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-emerald-500 shadow-sm"
+                  />
+                </div>
+              </div>
+
+              {/* 발송 & 정기 구독 등록 버튼 */}
+              <div className="flex flex-col sm:flex-row justify-between items-center gap-3 pt-2">
+                <div className="text-[11px] text-slate-500 font-medium">
+                  💡 <b>보안 안내:</b> 구글 계정 ➔ 보안 ➔ 2단계 인증 ➔ <b>앱 비밀번호(16자리)</b>를 등록하시면 본인 계정으로 직접 수신됩니다.
+                </div>
+                <div className="flex space-x-2 w-full sm:w-auto justify-end">
+                  <button
+                    onClick={handleSendEmailBriefing}
+                    disabled={sendingEmail}
+                    className="px-5 py-2.5 bg-sky-950 text-white rounded-lg text-sm font-bold hover:bg-sky-900 transition disabled:opacity-50 flex items-center space-x-2 whitespace-nowrap shadow-sm"
+                  >
+                    {sendingEmail ? (
+                      <>
+                        <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                        <span>생성 & 발송 중...</span>
+                      </>
+                    ) : (
+                      <span>✉️ 지금 브리핑 받기</span>
+                    )}
+                  </button>
+                  <button
+                    onClick={handleSubscribeNewsletter}
+                    disabled={subscribing}
+                    className="px-5 py-2.5 bg-emerald-500 text-slate-950 rounded-lg text-sm font-extrabold hover:bg-emerald-400 transition disabled:opacity-50 flex items-center space-x-2 whitespace-nowrap shadow-sm"
+                  >
+                    {subscribing ? (
+                      <span>등록 중...</span>
+                    ) : (
+                      <span>🔔 정기 구독 등록</span>
+                    )}
+                  </button>
                 </div>
               </div>
             </div>
