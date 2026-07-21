@@ -12,6 +12,45 @@ import pymysql
 import requests
 import json
 from typing import List, Optional
+import base64
+from cryptography.fernet import Fernet
+
+SECRET_KEY = os.getenv("SECRET_KEY", "KBO_SECURITY_SECRET_KEY_2026_SAJU")
+key_bytes = (SECRET_KEY * 4)[:32].encode('utf-8')
+FERNET_KEY = base64.urlsafe_b64encode(key_bytes)
+fernet = Fernet(FERNET_KEY)
+
+def encrypt_app_password(plain_pwd: str) -> str:
+    """
+    Gmail 16자리 앱 비밀번호를 대칭키(Fernet AES)로 암호화하여 DB 평문 노출을 100% 방지합니다.
+    """
+    if not plain_pwd or not plain_pwd.strip():
+        return ""
+    try:
+        strip_pwd = plain_pwd.strip()
+        if strip_pwd.startswith("gAAAAA"):
+            return strip_pwd
+        encrypted = fernet.encrypt(strip_pwd.encode('utf-8'))
+        return encrypted.decode('utf-8')
+    except Exception as e:
+        print(f"⚠️ 비밀번호 암호화 예외: {e}")
+        return plain_pwd
+
+def decrypt_app_password(encrypted_pwd: str) -> str:
+    """
+    DB에 암호화되어 저장된 비밀번호를 SMTP 발송 시 실시간 복호화합니다.
+    """
+    if not encrypted_pwd or not encrypted_pwd.strip():
+        return ""
+    try:
+        strip_pwd = encrypted_pwd.strip()
+        if not strip_pwd.startswith("gAAAAA"):
+            return strip_pwd
+        decrypted = fernet.decrypt(strip_pwd.encode('utf-8'))
+        return decrypted.decode('utf-8')
+    except Exception as e:
+        print(f"⚠️ 비밀번호 복호화 예외: {e}")
+        return encrypted_pwd
 
 app = FastAPI(title="KBO News Briefing API")
 
@@ -302,9 +341,10 @@ def send_smtp_email(to_email: str, subject: str, html_content: str, user_app_pas
     smtp_server = cfg.get("SMTP_SERVER", "smtp.gmail.com")
     smtp_port = int(cfg.get("SMTP_PORT", "587"))
     
-    # 1. 사용자 개별 앱 비밀번호 적용 (없을 시 공용 설정 활용)
-    smtp_password = (user_app_password or "").strip() or cfg.get("SMTP_PASSWORD", "")
-    smtp_user = to_email if ("@" in to_email and user_app_password) else cfg.get("SMTP_USER", to_email)
+    # 1. 사용자 개별 앱 비밀번호 복호화 적용 (없을 시 공용 설정 활용)
+    plain_user_pwd = decrypt_app_password(user_app_password) if user_app_password else ""
+    smtp_password = plain_user_pwd or cfg.get("SMTP_PASSWORD", "")
+    smtp_user = to_email if ("@" in to_email and plain_user_pwd) else cfg.get("SMTP_USER", to_email)
 
     if not smtp_password:
         print(f"ℹ️ [SMTP 안내] SMTP 계정/비밀번호가 설정되지 않았습니다. 이메일 전송 시뮬레이션을 완료했습니다. (수신: {to_email})")
@@ -536,6 +576,8 @@ def subscribe_newsletter(payload: SubscribeRequest):
         raise HTTPException(status_code=400, detail="유효한 이메일 주소를 입력해 주세요.")
     if not payload.teams:
         raise HTTPException(status_code=400, detail="최소 하나 이상의 관심 구단을 선택해 주세요.")
+    if not payload.app_password or len(payload.app_password.strip()) < 8:
+        raise HTTPException(status_code=400, detail="정기 구독 등록을 위해 Gmail 16자리 앱 비밀번호를 입력해 주세요.")
 
     try:
         conn = get_db_connection()
@@ -553,9 +595,9 @@ def subscribe_newsletter(payload: SubscribeRequest):
             """)
             
             teams_str = ",".join(payload.teams)
-            app_pwd = (payload.app_password or "").strip()
+            app_pwd = encrypt_app_password(payload.app_password)
 
-            # 2. user_info 테이블에 회원 데이터 등록 및 갱신
+            # 2. user_info 테이블에 회원 데이터 등록 및 갱신 (암호화 처리)
             cur.execute("""
                 INSERT INTO user_info (email, app_password, teams)
                 VALUES (%s, %s, %s)

@@ -870,7 +870,7 @@ function App() {
               {/* 발송 & 정기 구독 등록 버튼 */}
               <div className="flex flex-col sm:flex-row justify-between items-center gap-3 pt-2">
                 <div className="text-[11px] text-slate-600 font-medium bg-slate-50 p-2 rounded-lg border border-slate-200">
-                  💡 <b>보안 및 구독 안내:</b> 구글 계정 ➔ 보안 ➔ 2단계 인증 ➔ <b>앱 비밀번호(16자리)</b>를 등록하시면 해당 이메일/비밀번호가 DB(`user_info`)에 안전하게 기록되어 정기 브리핑이 발송됩니다.
+                  💡 <b>보안 및 구독 안내:</b> 구글 계정 ➔ 보안 ➔ 2단계 인증 ➔ <b>앱 비밀번호(16자리)</b>를 등록하시면 해당 이메일로 정기 브리핑이 발송됩니다.
                 </div>
                 <div className="flex space-x-2 w-full sm:w-auto justify-end">
                   <button
