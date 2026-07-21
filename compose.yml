@@ -146,12 +146,15 @@ services:
       context: .
       dockerfile: ./backend/Dockerfile
     container_name: kbo-backend
+    env_file:
+      - .env
     ports:
       - "8000:8000"
     volumes:
       - ./backend:/app
       - ./saju.py:/app/saju.py
       - ./deep_learning:/app/deep_learning
+      - ./.env:/app/.env
     restart: always
 
   # =====================================================

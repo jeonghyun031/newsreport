@@ -48,17 +48,21 @@ SPORTS_ALIASES = {
     "케이티": "kt", "kt": "kt", "케이티위즈": "kt", "kt위즈": "kt", "ktwiz": "kt"
 }
 
-# .env 환경 설정 로드
+# .env 환경 설정 로드 (시스템 환경변수 + 다중 .env 파일 탐색)
 def load_db_config():
-    env_dict = {}
-    env_path = ".env"
-    if os.path.exists(env_path):
-        with open(env_path, "r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if line and not line.startswith("#") and "=" in line:
-                    k, v = line.split("=", 1)
-                    env_dict[k.strip()] = v.strip()
+    env_dict = dict(os.environ)
+    env_paths = [".env", "../.env", "/app/.env", os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env")]
+    for path in env_paths:
+        if os.path.exists(path):
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if line and not line.startswith("#") and "=" in line:
+                            k, v = line.split("=", 1)
+                            env_dict[k.strip()] = v.strip().strip('"').strip("'")
+            except Exception as e:
+                print(f"⚠️ .env 로드 중 오류 ({path}): {e}")
     return env_dict
 
 # DB 연결 헬퍼 함수
@@ -505,7 +509,6 @@ def send_email_briefing(payload: EmailBriefingRequest):
 def subscribe_newsletter(payload: SubscribeRequest):
     """
     관심 구단 이메일 구독 정보를 MySQL(total_db.email_subscribers)에 저장합니다.
-    (CREATE TABLE DDL을 수행하지 않고 기존 테이블에 등록)
     """
     if not payload.email or "@" not in payload.email:
         raise HTTPException(status_code=400, detail="유효한 이메일 주소를 입력해 주세요.")
@@ -523,9 +526,9 @@ def subscribe_newsletter(payload: SubscribeRequest):
             """, (payload.email, teams_str))
         conn.commit()
         conn.close()
-        return {"success": True, "message": f"'{payload.email}' 주소로 {teams_str} 구단 뉴스 구독이 등록되었습니다!"}
+        return {"success": True, "message": f"'{payload.email}' 주소로 {teams_str} 구단 뉴스 구독이 성공적으로 등록되었습니다!"}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"구독 등록 처리 실패 (테이블 확인 필요): {str(e)}")
+        raise HTTPException(status_code=500, detail=f"구독 등록 처리 실패: {str(e)}")
 
 @app.post("/api/send-batch-email-briefings")
 def send_batch_email_briefings():
@@ -537,10 +540,6 @@ def send_batch_email_briefings():
         conn = get_db_connection()
         subscribers = []
         with conn.cursor() as cur:
-            cur.execute("SHOW TABLES LIKE 'email_subscribers'")
-            if not cur.fetchone():
-                return {"success": True, "message": "구독자 목록 테이블이 아직 존재하지 않습니다.", "sent_count": 0}
-                
             cur.execute("SELECT email, teams FROM email_subscribers")
             subscribers = cur.fetchall()
         conn.close()
