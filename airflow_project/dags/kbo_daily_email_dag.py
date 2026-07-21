@@ -20,24 +20,20 @@ default_args = {
 
 def trigger_batch_email_briefing():
     """
-    FastAPI 백엔드의 /api/send-batch-email-briefings 엔드포인트를 호출합니다.
+    FastAPI 백엔드(kbo-backend 컨테이너)의 /api/send-batch-email-briefings 엔드포인트를 호출합니다.
     """
-    # Docker 컨테이너 내 네트워크 접속 주소 (kbo-backend 서비스)
-    url = "http://backend:8000/api/send-batch-email-briefings"
+    # Docker 컨테이너 간 통신용 주소
+    URL = "http://kbo-backend:8000/api/send-batch-email-briefings"
+    
     try:
-        response = requests.post(url, timeout=60)
-        response.raise_for_status()
+        response = requests.post(URL, timeout=60)
+        response.raise_for_status()  # 4xx, 500 에러 발생 시 HTTPError 예외 발생
         res_data = response.json()
         print(f"✅ Airflow 정기 이메일 브리핑 트리거 성공: {res_data}")
-    except Exception as e:
-        # 컨테이너 외부/로컬 실행 대비 localhost 폴백 시도
-        try:
-            fallback_url = "http://localhost:8000/api/send-batch-email-briefings"
-            response = requests.post(fallback_url, timeout=60)
-            response.raise_for_status()
-            print(f"✅ Airflow 정기 이메일 브리핑 트리거 성공 (localhost): {response.json()}")
-        except Exception as err:
-            raise RuntimeError(f"❌ 정기 이메일 브리핑 트리거 실패: {err}")
+        return res_data
+    except Exception as err:
+        # 백엔드 호출 실패 시 명확한 메시지와 함께 실패 처리 (Airflow Retry 동작)
+        raise RuntimeError(f"❌ [kbo-backend] 정기 이메일 브리핑 트리거 실패: {err}")
 
 with DAG(
     'kbo_daily_email_briefing_dag',

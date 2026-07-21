@@ -11,6 +11,9 @@ from airflow import DAG
 from airflow.operators.python import PythonOperator
 from airflow.operators.bash import BashOperator
 from airflow.exceptions import AirflowException
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
 
 # 셀레니움 & 뷰티풀수프
 from selenium import webdriver
@@ -59,8 +62,10 @@ def get_remote_driver():
     )
 
 
+
+
 def run_pure_crawler(**context):
-    """[야구 - 속보] 최신 뉴스 크롤러 (더보기 루프 포함)"""
+    """[야구 - 속보] 날짜별 최신 뉴스 크롤러 (더보기 완전 탐색)"""
     print("원격 셀레니움 컨테이너에 브라우저 실행을 요청합니다...")
     driver = get_remote_driver()
     news_list = []
@@ -69,51 +74,57 @@ def run_pure_crawler(**context):
         import pendulum
         utc_logical_date = context['logical_date']
         kst_logical_date = utc_logical_date.in_timezone(pendulum.timezone("Asia/Seoul"))
-        news_date = kst_logical_date.strftime("%Y%m%d")
+        news_date = kst_logical_date.strftime("%Y%m%d")  # 예: "20260721"
         
-        target_url = "https://sports.daum.net/baseball/news/breaking"
+        # 1. 날짜 포함 URL 생성
+        target_url = f"https://sports.daum.net/baseball/news/breaking?date={news_date}&photo=false"
+        print(f"🔗 접속 URL: {target_url}")
+        
         driver.get(target_url)
         time.sleep(2) 
         
-        # --- 더보기 클릭 루프 ---
         click_count = 0
-        last_news_count = 0 
-
+        
+        # 2. 더보기 클릭 루프
         while True:
             try:
+                more_button = WebDriverWait(driver, 2).until(
+                    EC.presence_of_element_located((By.CSS_SELECTOR, "a.link_moreview"))
+                )
+                
+                style_attr = more_button.get_attribute("style") or ""
+                if "display: none" in style_attr or not more_button.is_displayed():
+                    print(f"🛑 더보기 버튼 숨겨짐 (display: none). [{news_date}] 모든 기사 로드 완료.")
+                    break
+
+                driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", more_button)
+                time.sleep(0.3)
+                driver.execute_script("arguments[0].click();", more_button)
+                
+                click_count += 1
+                
                 current_soup = BeautifulSoup(driver.page_source, 'html.parser')
                 ul_element = current_soup.select_one(".list_news")
                 current_news_count = len(ul_element.select("li")) if ul_element else 0
                 
-                if click_count > 0 and current_news_count == last_news_count:
-                    print("더 이상 추가되는 기사가 없습니다. 루프를 종료합니다.")
-                    break
-                
-                last_news_count = current_news_count
-                more_button = driver.find_element(By.CLASS_NAME, "link_moreview")
-                
-                if more_button.is_displayed():
-                    more_button.click()
-                    click_count += 1
-                    print(f"더보기 버튼 {click_count}번째 클릭 완료 (현재 기사 수: {current_news_count}개)")
-                    time.sleep(1.5) 
-                else:
-                    print("더보기 버튼이 시각적으로 숨겨졌습니다.")
-                    break
-                    
-            except Exception:
-                print("더보기 클릭 종료 또는 모든 기사 로드 완료")
+                print(f"▶️ [더보기 {click_count}회차] 현재 로드된 기사: {current_news_count}개")
+                time.sleep(1.5)
+
+            except Exception as e:
+                print(f"🛑 더보기 버튼 더 이상 없음 (이유: {e})")
                 break
 
-        # --- 파싱 ---
+        # 3. HTML 파싱 및 데이터 추출 (try 내부 수행)
         soup = BeautifulSoup(driver.page_source, 'html.parser')
         ul_element = soup.select_one(".list_news")
+        
         if not ul_element:
             print("뉴스 리스트 영역을 찾을 수 없습니다.")
+            context["ti"].xcom_push(key="crawl_count", value=0)
             return
             
         lis = ul_element.select("li")
-        print(f"총 수집 대상 뉴스 기사 수: {len(lis)}개")
+        print(f"🎉 [{news_date}] 최종 수집 대상 뉴스 기사 수: {len(lis)}개")
 
         for idx, li in enumerate(lis):
             try:
@@ -155,19 +166,20 @@ def run_pure_crawler(**context):
                 
                 news_list.append({
                     "date": rk_date,
-                    "title": title,
                     "media": script,
+                    "title": title,
                     "content": doct_clean,
                     "url": news_url
                 })
             
             except Exception as e:
-                print(f"{idx+1}번째 뉴스 데이터 추출 중 오류 발생 (스킵): {e}")
+                print(f"{idx+1}번째 뉴스 파싱 중 오류 (스킵): {e}")
                 continue
 
+        # 4. DataFrame 변환 및 공유 볼륨 저장
         df = pd.DataFrame(news_list)
         if not df.empty:
-            df = df[["date", "title", "media", "content", "url"]]
+            df = df[["date", "media", "title", "content", "url"]]
             filename = f"raw_news_{news_date}.csv"
             
             if not os.path.exists(SHARED_RAW_DIR):
@@ -178,7 +190,7 @@ def run_pure_crawler(**context):
             len_df = len(df)
             
             context["ti"].xcom_push(key="crawl_count", value=len_df)
-            print(f"\n[속보 완료] 공유 볼륨 원본 저장 성공! -> {save_path} (총 {len_df}건)")
+            print(f"\n✅ [속보 완료] 공유 볼륨 저장 성공! -> {save_path} (총 {len_df}건)")
         else:
             context["ti"].xcom_push(key="crawl_count", value=0)
             print("수집된 속보 데이터가 없습니다.")
@@ -187,6 +199,7 @@ def run_pure_crawler(**context):
         print(f"속보 크롤링 진행 중 치명적 에러 발생: {e}")
         raise e
     finally:
+        # 안전하게 브라우저 자원 반납
         driver.quit()
         print("Chrome 브라우저를 안전하게 종료했습니다.")
 
@@ -253,9 +266,9 @@ def run_baseball_ranking_crawler(**context):
                     
                     news_list.append({
                         "rank": rank, 
-                        "date": rk_date, 
-                        "title": title, 
+                        "date": rk_date,
                         "media": script,
+                        "title": title, 
                         "content": " ".join(doct.split()), 
                         "url": news_url, 
                         "type": "ranking"
@@ -267,7 +280,7 @@ def run_baseball_ranking_crawler(**context):
         df = pd.DataFrame(news_list)
         
         if df.empty:
-            df = pd.DataFrame(columns=["rank", "date", "title", "media", "content", "url", "type"])
+            df = pd.DataFrame(columns=["rank", "date", "media", "title", "content", "url", "type"])
             print("⚠️ 수집된 랭킹 데이터가 없어 빈 스키마 구조로 세팅합니다.")
             
         if not os.path.exists(SHARED_RAW_DIR): 

@@ -49,8 +49,7 @@ db_properties = {
     "driver": "com.mysql.cj.jdbc.Driver"
 }
 
-# 공통 실행 일자 파라미터 획득
-# 한국 시간(KST) 명시적 적용
+# 공통 실행 일자 파라미터 획득 (한국 시간 KST 명시적 적용)
 kst = timezone(timedelta(hours=9))
 target_date = sys.argv[1] if len(sys.argv) > 1 else datetime.now(kst).strftime("%Y%m%d")
 
@@ -65,8 +64,8 @@ print(f"\n📡 [1] 속보 뉴스 CSV 데이터를 추출하는 중... 대상 파
 
 news_schema = StructType([
     StructField("raw_date", StringType(), True),
-    StructField("raw_title", StringType(), True),
     StructField("raw_press", StringType(), True),
+    StructField("raw_title", StringType(), True),
     StructField("raw_content", StringType(), True),
     StructField("raw_url", StringType(), True)
 ])
@@ -74,7 +73,7 @@ news_schema = StructType([
 news_loaded = False
 try:
     news_df = spark.read \
-        .option("header", "true") \
+        .option("header", "false") \
         .option("multiLine", "true") \
         .option("quote", "\"") \
         .option("escape", "\"") \
@@ -98,12 +97,11 @@ if not os.path.exists(rank_csv_path) and os.path.exists(f"/home/jovyan/work/raw/
 
 print(f"\n📡 [2] KBO 랭킹 뉴스 CSV 데이터를 추출하는 중... 대상 파일: {rank_csv_path}")
 
-# 랭킹 CSV 전용 스키마 정의 (rank, date, title, media, content, url, type)
 rank_schema = StructType([
     StructField("raw_rank", StringType(), True),
     StructField("raw_date", StringType(), True),
-    StructField("raw_title", StringType(), True),
     StructField("raw_press", StringType(), True),
+    StructField("raw_title", StringType(), True),
     StructField("raw_content", StringType(), True),
     StructField("raw_url", StringType(), True),
     StructField("raw_type", StringType(), True)
@@ -113,7 +111,7 @@ rank_loaded = False
 try:
     if os.path.exists(rank_csv_path):
         rank_df = spark.read \
-            .option("header", "true") \
+            .option("header", "false") \
             .option("multiLine", "true") \
             .option("quote", "\"") \
             .option("escape", "\"") \
@@ -130,7 +128,6 @@ except Exception as e:
     print(e)
 
 
-# 두 소스 모두 로드 실패 시 세션 종료
 if not news_loaded and not rank_loaded:
     print("❌ 전처리할 데이터가 존재하지 않습니다. 작업을 종료합니다.")
     spark.stop()
@@ -180,11 +177,14 @@ if news_loaded:
     cleaned_news_df = cleaned_news_df.withColumn("date", to_timestamp(col("raw_date"), "yyyy.MM.dd HH:mm"))
     cleaned_news_df = cleaned_news_df.withColumn("category", classify_udf(col("title"), col("content")))
 
-    final_news_df = cleaned_news_df.select("date", "title", "press", "content", "category", "url")
-    final_news_df = final_news_df.dropDuplicates(subset=["title", "content"])
+    # 📌 요청사항 반영: 순서 [날짜, 언론사, 제목, 본문, 주소, 카테고리]
+    final_news_df = cleaned_news_df.select("date", "press", "title", "content", "url", "category")
+    
+    # 1. 파일 내부 중복 제거 (URL 및 제목 기준)
+    final_news_df = final_news_df.dropDuplicates(subset=["url"])
+    final_news_df = final_news_df.dropDuplicates(subset=["title"])
 
-    print(f"✨ 정제 및 중복 제거 완료 (속보): {final_news_df.count()}개")
-    final_news_df.show(3, truncate=30)
+    print(f"✨ 1차 파일 내 중복 제거 완료 (속보): {final_news_df.count()}개")
 
 
 # ==============================================================================
@@ -203,62 +203,85 @@ if rank_loaded:
     cleaned_rank_df = cleaned_rank_df.withColumn("date", to_timestamp(col("raw_date"), "yyyy.MM.dd HH:mm"))
     cleaned_rank_df = cleaned_rank_df.withColumn("type", when(col("raw_type").isNull(), "ranking").otherwise(trim(col("raw_type"))))
 
-    # 랭킹 테이블 전용 최종 데이터 프레임 구성
-    final_rank_df = cleaned_rank_df.select("rank", "date", "title", "press", "content", "url", "type")
-    final_rank_df = final_rank_df.dropDuplicates(subset=["rank", "title"]) # 동일 랭킹 및 동일 제목 중복 필터링
+    # 📌 랭킹 테이블 순서 지정: rank, date, press, title, content, url, type
+    final_rank_df = cleaned_rank_df.select("rank", "date", "press", "title", "content", "url", "type")
+    
+    # 파일 내부 중복 제거
+    final_rank_df = final_rank_df.dropDuplicates(subset=["rank", "title"])
 
-    print(f"✨ 정제 및 중복 제거 완료 (랭킹): {final_rank_df.count()}개")
-    final_rank_df.show(3, truncate=30)
+    print(f"✨ 1차 파일 내 중복 제거 완료 (랭킹): {final_rank_df.count()}개")
 
 
 # ==============================================================================
-# [Load 1] 야구 속보 뉴스 -> 기존 AWS MySQL 적재
+# [Load 1] 야구 속보 뉴스 -> DB 중복 체크 후 Append 적재
 # ==============================================================================
-if final_news_df:
+if final_news_df and final_news_df.count() > 0:
+    table_name = "news_articles"
     try:
-        print(f"\n🔄 AWS MySQL ({db_name}.news_articles)에 속보 데이터 로드 중...")
+        print(f"\n🔄 AWS MySQL ({db_name}.{table_name}) 데이터 체크 및 Append 진행...")
         
-        final_news_df.write \
-            .jdbc(url=jdbc_url, table="news_articles", mode="overwrite", properties=db_properties)
-            
-        print("🎉 AWS MySQL에 'news_articles' 테이블 생성 및 속보 데이터 저장 성공!")
-        
-        # 간단 검증 출력
-        print("\n🔍 [검증] AWS MySQL 속보 카테고리별 통계 조회 (news_articles)")
-        mysql_df = spark.read.jdbc(url=jdbc_url, table="news_articles", properties=db_properties)
-        mysql_df.groupBy("category").count().show()
+        # 📌 2. 기존 DB 테이블 존재 시 이미 있는 기사(URL 기준)를 필터링(Anti-Join)하여 DB 축적 중복 방지
+        try:
+            existing_db_df = spark.read.jdbc(url=jdbc_url, table=table_name, properties=db_properties)
+            # URL 또는 제목이 이미 존재하는 데이터는 제외
+            new_news_to_insert = final_news_df.join(
+                existing_db_df.select("url"),
+                on="url",
+                how="left_anti"
+            )
+        except Exception:
+            # 테이블이 아직 생성되지 않은 최초 실행의 경우 전체 데이터 적재
+            print(f"ℹ️ '{table_name}' 테이블이 아직 없어 신규 생성합니다.")
+            new_news_to_insert = final_news_df
+
+        insert_count = new_news_to_insert.count()
+        print(f"📥 DB 신규 추가 대상 기사 수: {insert_count}개")
+
+        if insert_count > 0:
+            # 📌 overwrite -> append로 변경하여 누적 저장
+            new_news_to_insert.write \
+                .jdbc(url=jdbc_url, table=table_name, mode="append", properties=db_properties)
+            print(f"🎉 AWS MySQL '{table_name}' 테이블에 {insert_count}건 추가(Append) 완료!")
+        else:
+            print(f"ℹ️ 모든 속보 기사가 이미 DB에 존재하여 추가 건수가 없습니다.")
 
     except Exception as e:
-        print("\n❌ [속보 DB] 적재 실패. 연결 및 테이블 사양을 확인하세요.")
-        print(e)
+        print(f"\n❌ [속보 DB] 적재 실패: {e}")
 
 
 # ==============================================================================
-# [Load 2] KBO 랭킹 뉴스 -> 🌟추후 지정 전용 영역 (현재 주석 처리)🌟
+# [Load 2] KBO 랭킹 뉴스 -> DB 중복 체크 후 Append 적재
 # ==============================================================================
-if final_rank_df:
-    print("📋 현재 정제 완료된 랭킹 데이터 스키마:")
-    final_rank_df.printSchema()
-    
-    # --------------------------------------------------------------------------
-    # [새로운 테이블 생성 및 적재 코드]
-    # --------------------------------------------------------------------------
-    # 💡 꿀팁: 테이블이 존재하지 않는다면, Spark가 자동으로 스키마를 참고하여 테이블을 새로 만듭니다.
-    target_table_name = "kbo_rankings"  # 👈 여기에 새로 만들고 싶은 테이블 이름을 입력하세요!
-    
+if final_rank_df and final_rank_df.count() > 0:
+    target_table_name = "kbo_rankings"
     try:
-        print(f"🔄 랭킹 데이터를 article_db 내의 새로운 테이블 ({target_table_name})에 로드하는 중...")
+        print(f"\n🔄 랭킹 데이터 DB ({target_table_name}) 체크 및 Append 진행...")
         
-        # 'overwrite'는 기존에 테이블이 혹시 있다면 덮어쓰며 새로 만들고, 
-        # 'append'는 매번 실행할 때마다 데이터를 아래에 덧붙입니다. 상황에 맞게 골라보세요!
-        final_rank_df.write \
-            .jdbc(url=jdbc_url, table=target_table_name, mode="overwrite", properties=db_properties)
-            
-        print(f"🎉 랭킹 데이터를 '{target_table_name}' 테이블에 적재 및 생성을 완료했습니다!")
-        
+        try:
+            existing_rank_df = spark.read.jdbc(url=jdbc_url, table=target_table_name, properties=db_properties)
+            # URL 또는 (date, rank) 기준 DB 중복 방지 필터링
+            new_rank_to_insert = final_rank_df.join(
+                existing_rank_df.select("url"),
+                on="url",
+                how="left_anti"
+            )
+        except Exception:
+            print(f"ℹ️ '{target_table_name}' 테이블이 아직 없어 신규 생성합니다.")
+            new_rank_to_insert = final_rank_df
+
+        rank_insert_count = new_rank_to_insert.count()
+        print(f"📥 DB 신규 추가 대상 랭킹 기사 수: {rank_insert_count}개")
+
+        if rank_insert_count > 0:
+            # 📌 overwrite -> append로 변경하여 누적 저장
+            new_rank_to_insert.write \
+                .jdbc(url=jdbc_url, table=target_table_name, mode="append", properties=db_properties)
+            print(f"🎉 랭킹 데이터 '{target_table_name}' 테이블에 {rank_insert_count}건 추가(Append) 완료!")
+        else:
+            print(f"ℹ️ 모든 랭킹 기사가 이미 DB에 존재하여 추가 건수가 없습니다.")
+
     except Exception as e:
-        print(f"\n❌ [랭킹 DB] '{target_table_name}' 테이블 적재 실패:")
-        print(e)
+        print(f"\n❌ [랭킹 DB] 적재 실패: {e}")
 
 
 # 최종 세션 종료
