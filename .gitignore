@@ -8,7 +8,6 @@ __pycache__/
 .env
 
 # Airflow 관련 파일 및 로그
-airflow_project/airflow.cfg/
 airflow_project/logs/
 shared/
 shared/raw/
